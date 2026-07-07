@@ -1,0 +1,12 @@
+node_modules
+.output
+.vite
+.durable-streams-data
+dist
+*.local
+.DS_Store
+.env
+.wrangler
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
