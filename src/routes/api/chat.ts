@@ -1,25 +1,13 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { chat, type StreamChunk } from '@tanstack/ai'
-import { openaiText } from '@tanstack/ai-openai'
+import type { StreamChunk } from '@tanstack/ai'
 import {
   toDurableChatSessionResponse,
   type WaitUntil,
 } from '@durable-streams/tanstack-ai-transport'
 import type { DurableSessionMessage } from '@durable-streams/tanstack-ai-transport'
 import { attachAgentRunController, releaseAgentRunAbort } from '../../lib/agent/agentRunCancellation'
-import {
-  parseChatBody,
-  routeAgentStreamChunks,
-  textFromDurableMessage,
-  toModelMessages,
-} from '../../lib/agent/chatStreamRouting'
-import {
-  buildChatToolSystemPrompt,
-  buildEditorContextSystemPrompt,
-  buildPostEditSummaryPrompt,
-  buildPostEditSummarySystemPrompt,
-} from '../../lib/agent/prompts'
-import { createDocumentTools } from '../../lib/agent/documentTools'
+import { parseChatBody, routeAgentStreamChunks, toModelMessages } from '../../lib/agent/chatStreamRouting'
+import { buildChatToolSystemPrompt, buildEditorContextSystemPrompt } from '../../lib/agent/prompts'
 import { DocumentToolRuntime } from '../../lib/agent/documentToolRuntime'
 import type { EditorContextPayload } from '../../lib/agent/editorContext'
 import { runPythonAgentStream } from '../../lib/agent/pythonAgentBridge'
@@ -39,31 +27,6 @@ function latestUserMessage(messages: DurableSessionMessage[]): DurableSessionMes
     }
   }
   return null
-}
-
-function latestUserMessageText(messages: DurableSessionMessage[]): string {
-  const latest = latestUserMessage(messages)
-  return latest ? textFromDurableMessage(latest) : ''
-}
-
-async function* postEditSummaryStream(input: {
-  runtime: DocumentToolRuntime
-  messages: DurableSessionMessage[]
-  abortController: AbortController
-}): AsyncIterable<StreamChunk> {
-  const summaryPrompt = buildPostEditSummaryPrompt({
-    userRequest: latestUserMessageText(input.messages),
-    mutations: input.runtime.getCompletedMutations(),
-  })
-  const stream = chat({
-    adapter: openaiText((process.env.OPENAI_MODEL?.trim() || 'gpt-5.4') as any),
-    messages: [{ role: 'user', content: summaryPrompt }] as any,
-    systemPrompts: [buildPostEditSummarySystemPrompt()],
-    abortController: input.abortController,
-  })
-  for await (const chunk of stream) {
-    yield chunk
-  }
 }
 
 function resolveWaitUntil(
@@ -101,11 +64,8 @@ async function* agentResponseStream(input: {
   if (!input.runAgent) return
 
   const abortController = attachAgentRunController(input.docKey, input.sessionId)
-  const brainMode = process.env.AGENT_BRAIN_MODE === 'tanstack' ? 'tanstack' : 'python'
   let runtime: DocumentToolRuntime | null = null
   let bridgeRunId: string | null = null
-  let pendingPostEditSummary = false
-  let observedMutationCount = 0
 
   try {
     runtime = await DocumentToolRuntime.create({
@@ -120,63 +80,24 @@ async function* agentResponseStream(input: {
       selectedText: selectionSnapshot?.text,
     })
 
-    if (brainMode === 'python') {
-      // Python owns tool-call decisions + its own closing summary for this
-      // turn; real document mutations still run through the same `runtime`
-      // via the bridge route (src/routes/api/agent-bridge/tool.ts).
-      bridgeRunId = crypto.randomUUID()
-      registerBridgeRun(bridgeRunId, runtime)
+    // Python (agent_server.py) owns tool-call decisions + its own closing
+    // summary for this turn; real document mutations still run through the
+    // same `runtime` via the bridge route (src/routes/api/agent-bridge/tool.ts).
+    bridgeRunId = crypto.randomUUID()
+    registerBridgeRun(bridgeRunId, runtime)
 
-      const pythonStream = runPythonAgentStream({
-        runId: bridgeRunId,
-        messages: toModelMessages(input.messages) as any,
-        systemPrompt: [buildChatToolSystemPrompt(input.mode), editorContextPrompt]
-          .filter((p): p is string => Boolean(p))
-          .join(' '),
-        mode: input.mode,
-        abortController,
-      })
+    const pythonStream = runPythonAgentStream({
+      runId: bridgeRunId,
+      messages: toModelMessages(input.messages) as any,
+      systemPrompt: [buildChatToolSystemPrompt(input.mode), editorContextPrompt]
+        .filter((p): p is string => Boolean(p))
+        .join(' '),
+      mode: input.mode,
+      abortController,
+    })
 
-      for await (const chunk of routeAgentStreamChunks(pythonStream, runtime)) {
-        yield chunk
-      }
-    } else {
-      const stream = chat({
-        adapter: openaiText((process.env.OPENAI_MODEL?.trim() || 'gpt-5.4') as any),
-        messages: toModelMessages(input.messages) as any,
-        systemPrompts: [
-          buildChatToolSystemPrompt(input.mode),
-          ...(editorContextPrompt ? [editorContextPrompt] : []),
-        ],
-        tools: createDocumentTools(runtime),
-        abortController,
-      })
-
-      for await (const chunk of routeAgentStreamChunks(stream, runtime)) {
-        const mutationCount = runtime.getCompletedMutationCount()
-        if (mutationCount > observedMutationCount) {
-          observedMutationCount = mutationCount
-          pendingPostEditSummary = true
-        }
-        if (chunk.type === 'TEXT_MESSAGE_START' && chunk.role === 'assistant') {
-          pendingPostEditSummary = false
-        }
-        yield chunk
-      }
-
-      if (
-        !abortController.signal.aborted &&
-        pendingPostEditSummary &&
-        runtime.getCompletedMutationCount() > 0
-      ) {
-        for await (const chunk of postEditSummaryStream({
-          runtime,
-          messages: input.messages,
-          abortController,
-        })) {
-          yield chunk
-        }
-      }
+    for await (const chunk of routeAgentStreamChunks(pythonStream, runtime)) {
+      yield chunk
     }
   } catch (error) {
     const chunk: StreamChunk = {
@@ -202,8 +123,8 @@ async function* agentResponseStream(input: {
         runtime.stopStreamingEdit(abortController.signal.aborted)
       }
     } finally {
-        if (bridgeRunId) releaseBridgeRun(bridgeRunId)
-        await runtime?.destroy()
+      if (bridgeRunId) releaseBridgeRun(bridgeRunId)
+      await runtime?.destroy()
       releaseAgentRunAbort(input.docKey, input.sessionId, abortController)
     }
   }

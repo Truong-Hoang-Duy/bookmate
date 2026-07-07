@@ -56,10 +56,10 @@ In practice that means:
 
 ### AI stack
 
-- [`@tanstack/ai`](http://tanstack.com/ai/) runs the model/tool loop and stream processing.
-- [`@tanstack/ai-react`](http://tanstack.com/ai/) provides the `useChat` hook used by the sidebar chat UI.
-- [`@tanstack/ai-openai`](http://tanstack.com/ai/) connects the app’s agent loop to OpenAI models.
-- [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses) is the underlying model API used for generation.
+- [`@tanstack/ai-react`](http://tanstack.com/ai/) provides the `useChat` hook used by the sidebar chat UI, over the Durable Streams chat transport.
+- [`@tanstack/ai`](http://tanstack.com/ai/) supplies the shared `StreamChunk`/`AGUIEvent` wire-format types the chat transport and agent bridge both speak — it does not run any model/tool loop itself in this repo.
+- **The agent brain is a separate Python process** (`src/routes/api/agent-python-demo/agent_server.py`, FastAPI + `pydantic`) that decides tool calls via an explicit tool-calling loop against the OpenAI API. Node executes each tool call for real against the shared document and relays the result back — see that folder's `README.md` for the full architecture. This process is **required** for chat to work at all; there is no TypeScript-only fallback.
+- [OpenAI API](https://platform.openai.com/docs/api-reference) is the underlying model API used for generation, called directly from Python.
 
 ### Agent editing/runtime
 
@@ -105,10 +105,12 @@ pnpm install
 2. Create `.env` in the repo root:
 
 ```bash
-OPENAI_API_KEY=your_openai_key_here
-OPENAI_MODEL=gpt-5.4
 APP_BASE_URL=http://localhost:3000
 PUBLIC_APP_BASE_URL=http://localhost:3000
+
+# Required: the Python agent bridge (see src/routes/api/agent-python-demo/README.md)
+AGENT_BRIDGE_SECRET=some-local-dev-secret
+PYTHON_AGENT_BASE_URL=http://127.0.0.1:8787
 
 # Optional server-side upstream config for Durable Streams services
 # DURABLE_STREAMS_YJS_BASE_URL=http://127.0.0.1:4438
@@ -117,19 +119,35 @@ PUBLIC_APP_BASE_URL=http://localhost:3000
 # DURABLE_STREAMS_CHAT_SECRET=your-chat-secret
 ```
 
-## Run locally
-
-Start the app, Durable Streams server, and Yjs server together:
+3. Set up the Python agent (the actual chat "brain" — see
+   `src/routes/api/agent-python-demo/README.md` for full details):
 
 ```bash
+cd src/routes/api/agent-python-demo
+python -m venv .venv && source .venv/Scripts/activate   # Windows PowerShell: .venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+cp .env.example .env   # fill in a real OPENAI_API_KEY and a matching AGENT_BRIDGE_SECRET
+```
+
+## Run locally
+
+This app needs **two processes** running together:
+
+```bash
+# Terminal 1, repo root: app + Durable Streams server + Yjs server
 pnpm dev
+
+# Terminal 2, src/routes/api/agent-python-demo/: the agent brain
+python agent_server.py
 ```
 
 Open:
 
 - `http://localhost:3000`
 
-On first load, enter a document name to create/join a room.
+On first load, enter a document name to create/join a room. If
+`agent_server.py` isn't running, the editor/collaboration still works but
+chat will fail — see Troubleshooting below.
 
 ## Development scripts
 
@@ -137,7 +155,7 @@ On first load, enter a document name to create/join a room.
 - `pnpm dev:app` - run app only
 - `pnpm dev:ds` - run Durable Streams + Yjs servers only
 - `pnpm test:unit` - deterministic unit tests
-- `pnpm test:evals` - live model-backed evals
+- `pnpm test:evals` - live evals against the real running app; requires `pnpm dev` **and** `python agent_server.py` already running, plus `OPENAI_API_KEY` set for the Python process
 - `pnpm typecheck` - TypeScript checks
 - `pnpm build` - production build
 - `pnpm preview` - build and preview the Cloudflare Worker locally with Wrangler
@@ -151,17 +169,26 @@ On first load, enter a document name to create/join a room.
 This repo is configured to deploy the TanStack Start app to Cloudflare Workers via Nitro's
 `cloudflare_module` preset.
 
+> **Chat does not work on this deployment.** The agent brain
+> (`agent_server.py`) is a Python process, and Python cannot run on
+> Cloudflare Workers. There is no TypeScript-only fallback anymore — the
+> deployed app is editor/collaboration-only unless you separately host
+> `agent_server.py` somewhere reachable and point `PYTHON_AGENT_BASE_URL` at
+> it (and open up `/api/agent-bridge/tool` to that host via
+> `AGENT_BRIDGE_SECRET`).
+
 What runs on Cloudflare:
 
 - the app shell
 - SSR/server routes
-- `/api/chat`
-- `/api/chat-stream`
-- `/api/yjs/*` proxy routes
+- the ProseMirror/Yjs collaborative editor (`/api/yjs/*` proxy routes)
+- `/api/chat` and `/api/chat-stream` routes exist, but chat requests will
+  fail unless `PYTHON_AGENT_BASE_URL` points at a reachable Python agent server
 
 What does not run on Cloudflare in this repo:
 
 - the local Durable Streams dev server in `src/dev/durableStreamsServer.ts`
+- the Python agent brain (`src/routes/api/agent-python-demo/agent_server.py`) — no Python runtime on Workers
 
 Before deploying, make sure your production Durable Streams services are already hosted and
 reachable from the public internet. The Worker cannot use `127.0.0.1`.
@@ -178,9 +205,10 @@ Set these in the Cloudflare dashboard or with Wrangler:
 
 - `APP_BASE_URL=https://collaborative-ai-editor.examples.electric-sql.com`
 - `PUBLIC_APP_BASE_URL=https://collaborative-ai-editor.examples.electric-sql.com`
-- `OPENAI_MODEL=gpt-5.4`
+- `OPENAI_MODEL=gpt-5.4` — kept for `wrangler.jsonc` compatibility; not read by the current chat path (Python calls OpenAI directly, not this Worker)
 - `DURABLE_STREAMS_YJS_BASE_URL=<hosted yjs upstream>`
 - `DURABLE_STREAMS_CHAT_BASE_URL=<hosted chat upstream>`
+- `PYTHON_AGENT_BASE_URL=<reachable agent_server.py host>` and `AGENT_BRIDGE_SECRET=<matching secret>` if you want chat to work on this deployment (see the callout above)
 
 For the Durable Streams values, this app supports either format:
 
@@ -240,6 +268,7 @@ Use a custom domain because the Worker is the application origin.
 - The Yjs provider is `@durable-streams/y-durable-streams`, so collaboration works over HTTP rather than a dedicated WebSocket stack.
 - The chat sidebar uses `@durable-streams/tanstack-ai-transport`, so model responses, tool calls, and resumable session history flow through Durable Streams.
 - The server-side agent keeps its own editing/runtime state and writes back into the shared document.
+- Tool-call decisions are made by a separate Python process (`agent_server.py`); Node executes each tool call for real and translates Python's output back into the same stream-chunk shapes the chat transport expects. See `AGENT_FLOWS.md` for the full request-level flow diagrams.
 
 ## Troubleshooting
 
@@ -253,15 +282,31 @@ Use a custom domain because the Worker is the application origin.
 - Check browser network for Yjs requests to:
   - `/v1/yjs/y-llm-demo-v2/docs/rooms/<doc>/v3/collaboration?...`
 
+### Chat fails immediately / `RUN_ERROR` about connecting to the agent server
+
+- Make sure `python agent_server.py` is running (see
+  `src/routes/api/agent-python-demo/README.md`) — chat has no fallback if
+  it's not.
+- Verify `PYTHON_AGENT_BASE_URL` in the root `.env` matches the port
+  `agent_server.py` is actually listening on.
+- Verify `AGENT_BRIDGE_SECRET` is set to the **same value** in both the root
+  `.env` and `src/routes/api/agent-python-demo/.env`.
+
 ### Chat works but AI generation fails
 
-- Verify `OPENAI_API_KEY` exists in `.env`.
-- Restart `pnpm dev` after changing env vars.
-- Check `/api/chat` response body for server error text.
+- Verify `OPENAI_API_KEY` exists in `src/routes/api/agent-python-demo/.env`
+  (Node's own `.env` no longer needs an OpenAI key — Python calls OpenAI
+  directly).
+- Restart `python agent_server.py` after changing its env vars.
+- Check the `agent_server.py` terminal output for the actual error.
 
 ### Live evals fail unexpectedly
 
-- Verify `OPENAI_API_KEY` and `OPENAI_MODEL` in `.env`.
+- `pnpm test:evals` now drives the real running app end-to-end — make sure
+  `pnpm dev` **and** `python agent_server.py` are both already running
+  before starting it.
+- Verify `OPENAI_API_KEY` and `OPENAI_MODEL` in
+  `src/routes/api/agent-python-demo/.env` (not the root `.env`).
 - Start with `gpt-5.4`, which is the current baseline used in this repo.
 - Re-run `pnpm test:evals`.
 

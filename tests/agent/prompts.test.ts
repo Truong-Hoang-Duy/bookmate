@@ -5,8 +5,6 @@ import {
   buildAgentUserPromptTemplate,
   buildChatToolSystemPrompt,
   buildDeterministicReply,
-  buildPostEditSummaryPrompt,
-  buildPostEditSummarySystemPrompt,
 } from '../../src/lib/agent/prompts'
 
 describe('prompt unit tests', () => {
@@ -83,19 +81,5 @@ describe('prompt unit tests', () => {
     expect(selectionPrompt).toContain('active editor selection')
     expect(selectionPrompt).toContain('Rewrite this exact sentence.')
     expect(selectionPrompt).toContain('get_selection_snapshot')
-  })
-
-  it('builds a post-edit summary prompt from actual mutations', () => {
-    const systemPrompt = buildPostEditSummarySystemPrompt()
-    const userPrompt = buildPostEditSummaryPrompt({
-      userRequest: 'Add a short story at the end.',
-      mutations: [
-        { kind: 'streaming_edit', mode: 'continue', contentFormat: 'plain_text', committedChars: 84 },
-      ],
-    })
-
-    expect(systemPrompt).toContain('Do not make any more document changes')
-    expect(userPrompt).toContain('User request: Add a short story at the end.')
-    expect(userPrompt).toContain('completed a continue streaming edit in plain_text (84 chars)')
   })
 })

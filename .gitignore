@@ -10,3 +10,8 @@ dist
 .dev.vars
 .dev.vars.*
 !.dev.vars.example
+
+# Python (src/routes/api/agent-python-demo/)
+__pycache__/
+*.pyc
+.venv

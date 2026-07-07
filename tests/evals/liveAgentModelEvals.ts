@@ -1,10 +1,6 @@
-import { chat, maxIterations } from '@tanstack/ai'
-import { openaiText } from '@tanstack/ai-openai'
-import { buildChatToolSystemPrompt } from '../../src/lib/agent/prompts'
-import { createDocumentTools } from '../../src/lib/agent/documentTools'
 import { DocumentToolRuntime } from '../../src/lib/agent/documentToolRuntime'
-import { routeAgentStreamChunks } from '../../src/lib/agent/chatStreamRouting'
-import { createTestSession, readDocJson, readDocText } from '../agent/testUtils'
+import type { ServerAgentSession } from '../../src/lib/agent/serverAgentSession'
+import { readDocJson, readDocText } from '../agent/testUtils'
 
 type EvalResult = {
   name: string
@@ -64,67 +60,154 @@ function validateRequiredChatSummary(result: EvalResult): string | null {
   return null
 }
 
-async function runScenario(scenario: Scenario): Promise<EvalResult> {
-  const session = createTestSession(`eval-${scenario.name.replace(/\s+/g, '-').toLowerCase()}`)
-  const runtime = DocumentToolRuntime.createForSession({ session })
+// --------------------------------------------------------------------------
+// Harness: drives the REAL app over HTTP (Node /api/chat -> Python
+// agent_server.py -> bridge -> DocumentToolRuntime), instead of calling
+// @tanstack/ai's chat() in-process. Requires `pnpm dev` and
+// `python agent_server.py` to already be running (see main()'s health check).
+// --------------------------------------------------------------------------
 
+const APP_BASE_URL = (process.env.APP_BASE_URL?.trim() || 'http://localhost:3000').replace(/\/$/, '')
+const PYTHON_AGENT_BASE_URL = (process.env.PYTHON_AGENT_BASE_URL?.trim() || 'http://127.0.0.1:8787').replace(
+  /\/$/,
+  '',
+)
+
+function slugify(name: string): string {
+  return name.replace(/\s+/g, '-').toLowerCase()
+}
+
+async function isServerReachable(url: string): Promise<boolean> {
   try {
-    if (scenario.seed) {
-      runtime.insertText(scenario.seed)
+    await fetch(url)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function connectSession(
+  docKey: string,
+  sessionId: string,
+): Promise<{ runtime: DocumentToolRuntime; session: ServerAgentSession }> {
+  const runtime = await DocumentToolRuntime.create({ docKey, sessionId })
+  // Eval-only introspection: DocumentToolRuntime has no public API for
+  // reading raw ProseMirror JSON (only plain-text snapshots), so we reach
+  // into the private `session` field to reuse the same readDocText/readDocJson
+  // helpers the unit tests already use, rather than duplicating that logic.
+  const session = (runtime as unknown as { session: ServerAgentSession }).session
+  return { runtime, session }
+}
+
+interface ParsedChunk {
+  type: string
+  [key: string]: unknown
+}
+
+async function fetchChunks(docKey: string, sessionId: string): Promise<ParsedChunk[]> {
+  const res = await fetch(
+    `${APP_BASE_URL}/api/chat-stream?docKey=${encodeURIComponent(docKey)}&sessionId=${encodeURIComponent(sessionId)}`,
+  )
+  if (!res.ok) return []
+  const text = await res.text()
+  if (!text.trim()) return []
+  try {
+    return JSON.parse(text) as ParsedChunk[]
+  } catch {
+    return []
+  }
+}
+
+async function waitForRunCompletion(docKey: string, sessionId: string, timeoutMs = 90_000): Promise<ParsedChunk[]> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    const chunks = await fetchChunks(docKey, sessionId)
+    if (chunks.some((c) => c.type === 'RUN_FINISHED' || c.type === 'RUN_ERROR')) {
+      // Small grace delay so the server's own runtime.destroy() (which flushes
+      // the Yjs provider) has a moment to settle before we open a fresh
+      // connection to read back the document.
+      await new Promise((resolve) => setTimeout(resolve, 400))
+      return chunks
     }
-    const initialDocText = readDocText(session)
+    await new Promise((resolve) => setTimeout(resolve, 400))
+  }
+  throw new Error(`Timed out after ${timeoutMs}ms waiting for the agent run to finish (docKey=${docKey}).`)
+}
 
-    const stream = chat({
-      adapter: openaiText((process.env.OPENAI_MODEL?.trim() || 'gpt-5.4') as any),
-      messages: [{ role: 'user', content: scenario.prompt }] as any,
-      systemPrompts: [buildChatToolSystemPrompt(scenario.preferredMode)],
-      tools: createDocumentTools(runtime),
-      agentLoopStrategy: maxIterations(10),
-      temperature: 0,
-    })
-
-    const toolCalls: string[] = []
-    let chatText = ''
-
-    for await (const chunk of routeAgentStreamChunks(stream, runtime)) {
-      if (chunk.type === 'TOOL_CALL_START') {
-        toolCalls.push(chunk.toolName)
-      }
-      if (chunk.type === 'TEXT_MESSAGE_CONTENT') {
-        chatText += chunk.delta
-      }
+function extractToolCallsAndChatText(chunks: ParsedChunk[]): { toolCalls: string[]; chatText: string } {
+  const toolCalls: string[] = []
+  let chatText = ''
+  const assistantMessageIds = new Set<string>()
+  for (const chunk of chunks) {
+    if (chunk.type === 'TEXT_MESSAGE_START' && chunk.role === 'assistant') {
+      assistantMessageIds.add(chunk.messageId as string)
     }
-
-    if (runtime.isStreamingEditActive()) {
-      runtime.stopStreamingEdit(false)
+    if (chunk.type === 'TOOL_CALL_START') {
+      toolCalls.push(chunk.toolName as string)
     }
-
-    const docText = readDocText(session)
-    const docJson = readDocJson(session)
-    const resultForValidation = {
-      name: scenario.name,
-      passed: true,
-      initialDocText,
-      docText,
-      docJson,
-      chatText,
-      toolCalls,
+    if (chunk.type === 'TEXT_MESSAGE_CONTENT' && assistantMessageIds.has(chunk.messageId as string)) {
+      chatText += chunk.delta as string
     }
-    const details =
-      scenario.validate(resultForValidation) ?? validateRequiredChatSummary(resultForValidation) ?? undefined
+  }
+  return { toolCalls, chatText }
+}
 
-    return {
-      name: scenario.name,
-      passed: !details,
-      initialDocText,
-      docText,
-      docJson,
-      chatText,
-      toolCalls,
-      details,
-    }
-  } finally {
-    runtime.destroy()
+async function runScenario(scenario: Scenario): Promise<EvalResult> {
+  const docKey = `eval-${slugify(scenario.name)}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`
+  const sessionId = 'eval'
+
+  let initialDocText = ''
+  if (scenario.seed) {
+    const { runtime, session } = await connectSession(docKey, sessionId)
+    runtime.insertText(scenario.seed)
+    initialDocText = readDocText(session)
+    await runtime.destroy()
+  }
+
+  const response = await fetch(
+    `${APP_BASE_URL}/api/chat?docKey=${encodeURIComponent(docKey)}&sessionId=${encodeURIComponent(sessionId)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: scenario.prompt }],
+        data: { runAgent: true, agentMode: scenario.preferredMode },
+      }),
+    },
+  )
+  if (!response.ok) {
+    throw new Error(`POST /api/chat failed with HTTP ${response.status} for scenario "${scenario.name}".`)
+  }
+
+  const chunks = await waitForRunCompletion(docKey, sessionId)
+  const { toolCalls, chatText } = extractToolCallsAndChatText(chunks)
+
+  const { runtime, session } = await connectSession(docKey, `${sessionId}-read`)
+  const docText = readDocText(session)
+  const docJson = readDocJson(session)
+  await runtime.destroy()
+
+  const resultForValidation: EvalResult = {
+    name: scenario.name,
+    passed: true,
+    initialDocText,
+    docText,
+    docJson,
+    chatText,
+    toolCalls,
+  }
+  const details =
+    scenario.validate(resultForValidation) ?? validateRequiredChatSummary(resultForValidation) ?? undefined
+
+  return {
+    name: scenario.name,
+    passed: !details,
+    initialDocText,
+    docText,
+    docJson,
+    chatText,
+    toolCalls,
+    details,
   }
 }
 
@@ -796,14 +879,39 @@ async function main() {
     process.exit(1)
   }
 
+  if (!(await isServerReachable(APP_BASE_URL))) {
+    console.error(`Cannot reach the app at ${APP_BASE_URL}. Start it first with "pnpm dev".`)
+    process.exit(1)
+  }
+  if (!(await isServerReachable(`${PYTHON_AGENT_BASE_URL}/docs`))) {
+    console.error(
+      `Cannot reach the Python agent server at ${PYTHON_AGENT_BASE_URL}. Start it first with "python agent_server.py" (see src/routes/api/agent-python-demo/README.md).`,
+    )
+    process.exit(1)
+  }
+
   console.log(
-    `Running ${scenarios.length} live model evals with ${process.env.OPENAI_MODEL?.trim() || 'gpt-5.4'}...`,
+    `Running ${scenarios.length} live model evals against the real app (Python agent brain) with ${process.env.OPENAI_MODEL?.trim() || 'gpt-5.4'}...`,
   )
   const results: EvalResult[] = []
 
   for (const scenario of scenarios) {
     console.log(`\n[eval] ${scenario.name}`)
-    const result = await runScenario(scenario)
+    let result: EvalResult
+    try {
+      result = await runScenario(scenario)
+    } catch (error) {
+      result = {
+        name: scenario.name,
+        passed: false,
+        initialDocText: '',
+        docText: '',
+        docJson: undefined,
+        chatText: '',
+        toolCalls: [],
+        details: error instanceof Error ? error.message : String(error),
+      }
+    }
     results.push(result)
     console.log(`tool calls: ${result.toolCalls.join(', ') || '(none)'}`)
     console.log(`doc: ${JSON.stringify(result.docText)}`)

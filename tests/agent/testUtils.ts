@@ -60,15 +60,3 @@ export function applyExternalInsert(session: ServerAgentSession, pos: number, te
     updateYFragment(session.ydoc, session.fragment, tr.doc, meta as never)
   }, { source: 'test-external' })
 }
-
-export function createEventCollector() {
-  const events: Array<{ name: string; value: Record<string, unknown> }> = []
-  return {
-    events,
-    context: {
-      emitCustomEvent: (name: string, value: Record<string, unknown>) => {
-        events.push({ name, value })
-      },
-    },
-  }
-}

@@ -5,28 +5,27 @@
 > nằm cạnh các route thật cho tiện tham chiếu — không file `.py` nào ở đây
 > được `pnpm dev`, `pnpm build`, hay `pnpm typecheck` đụng tới.
 
-Thư mục này chứa một **agent Python thật**, đóng vai trò "bộ não" cho chat
-thật của app `collaborative-ai-editor`. Khi bật (`AGENT_BRAIN_MODE=python`,
-giá trị mặc định), chính Python — không phải `@tanstack/ai` — quyết định gọi
-tool nào khi người dùng chat trong sidebar thật, và các tool đó **chỉnh sửa
-thật** tài liệu ProseMirror/Yjs đang được chia sẻ trong ứng dụng.
+Thư mục này chứa **agent Python thật** — bộ não duy nhất cho chat thật của
+app `collaborative-ai-editor`. Chính Python quyết định gọi tool nào khi người
+dùng chat trong sidebar thật, và các tool đó **chỉnh sửa thật** tài liệu
+ProseMirror/Yjs đang được chia sẻ trong ứng dụng. Không còn nhánh dự phòng
+nào khác — nếu `agent_server.py` không chạy, chat sẽ báo lỗi kết nối.
 
 ## Vì sao lại có file Python trong một dự án TypeScript?
 
-Dự án `collaborative-ai-editor` 100% dùng TypeScript (xem `README.md` ở gốc
-repo). Agent thật (`Electra`) dùng `@tanstack/ai` + `zod`, chạy tool-calling
-loop **ẩn bên trong thư viện** — bạn không thấy được vòng lặp gọi model từng
-bước khi đọc code TypeScript thật. `agent_server.py` viết lại đúng ý tưởng
-đó bằng Python + `pydantic` (thay cho vai trò của `zod`) với **vòng lặp
-tường minh**: gửi request tới model → model yêu cầu gọi tool → validate
-tham số bằng pydantic → gọi ngược về Node để thực thi tool thật → gửi kết
-quả lại cho model → lặp lại → cho tới khi model trả lời cuối cùng.
+Dự án `collaborative-ai-editor` dùng TypeScript cho toàn bộ ứng dụng (editor,
+Yjs, routing — xem `README.md` ở gốc repo), nhưng "bộ não" quyết định agent
+gọi tool nào là `agent_server.py`: một vòng lặp tool-calling **tường minh**
+bằng Python + `pydantic`, gọi thẳng OpenAI streaming: gửi request tới model →
+model yêu cầu gọi tool → validate tham số bằng pydantic → gọi ngược về Node
+để thực thi tool thật → gửi kết quả lại cho model → lặp lại → cho tới khi
+model trả lời cuối cùng.
 
 Vì Yjs là thư viện JavaScript, Python không thể tự nói chuyện với nó. Nên
 `agent_server.py` chỉ đóng vai trò "bộ não" (gọi OpenAI streaming thật,
 quyết định gọi tool nào) — còn việc **thực thi tool thật** (đọc/sửa tài
-liệu) do Node làm qua `DocumentToolRuntime` đã có sẵn, gọi ngược lại qua một
-route nội bộ.
+liệu) do Node làm qua `DocumentToolRuntime` đã có sẵn (validate lại bằng
+`zod` trong `documentToolDispatch.ts`), gọi ngược lại qua một route nội bộ.
 
 ## Kiến trúc
 
@@ -34,7 +33,7 @@ route nội bộ.
 Browser (useChat, KHÔNG đổi gì)
    │  POST /api/chat  (Durable Streams, như cũ)
    ▼
-Node: src/routes/api/chat.ts  (AGENT_BRAIN_MODE=python)
+Node: src/routes/api/chat.ts
    │  tạo DocumentToolRuntime thật, đăng ký theo runId
    ▼                                              ▲
 POST /agent/run (NDJSON stream) ──────────►  agent_server.py
@@ -59,10 +58,10 @@ POST /api/agent-bridge/tool                        │
 | Trong `agent_server.py` | Tương ứng trong dự án thật |
 |---|---|
 | Các model `pydantic.BaseModel` cho từng tool (`agent_shared.py`) | Các schema `zod` trong `src/lib/agent/documentToolDispatch.ts` |
-| 17 tool cùng tên, cùng tham số | `createDocumentTools()` / `executeDocumentTool()` |
+| 17 tool cùng tên, cùng tham số | `executeDocumentTool()` trong `src/lib/agent/documentToolDispatch.ts` |
 | System prompt nhận từ Node qua `/agent/run` | `buildChatToolSystemPrompt()` trong `src/lib/agent/prompts.ts` |
-| Vòng lặp `while True` tường minh trong `stream_agent_run()` | Vòng lặp tool-calling **ẩn bên trong** `chat()` của `@tanstack/ai` (khi `AGENT_BRAIN_MODE=tanstack`) |
-| Tự gọi thêm 1 lần model không kèm tool để tóm tắt khi cần | `postEditSummaryStream` trong `src/routes/api/chat.ts` (chỉ dùng ở nhánh `tanstack`) |
+| Vòng lặp `while True` tường minh trong `stream_agent_run()` | Không có tương đương — đây là bộ não thật duy nhất, không có vòng lặp nào khác trong dự án |
+| Tự gọi thêm 1 lần model không kèm tool để tóm tắt khi cần | Tự làm hoàn toàn trong `agent_server.py` (`had_mutation`/`chat_message_sent`), không có phía TypeScript |
 | `POST /api/agent-bridge/tool` (thực thi tool thật) | `DocumentToolRuntime` trong `src/lib/agent/documentToolRuntime.ts` |
 
 ## Hướng dẫn chạy toàn bộ dự án (frontend + backend)
@@ -73,7 +72,6 @@ Cần **3 tiến trình** chạy song song. Mở 3 terminal khác nhau.
 
 **Ở gốc repo**, file `.env` (đã có sẵn giá trị mẫu — chỉnh nếu cần):
 ```
-AGENT_BRAIN_MODE=python
 AGENT_BRIDGE_SECRET=<một chuỗi bí mật bất kỳ>
 PYTHON_AGENT_BASE_URL=http://127.0.0.1:8787
 ```
@@ -118,21 +116,20 @@ Log sẽ báo `agent_server.py đang lắng nghe tại http://127.0.0.1:8787`.
 ### 4. Frontend — Terminal 3 (hoặc trình duyệt)
 
 Mở `http://localhost:3000`, nhập tên tài liệu để tạo/tham gia phòng, rồi
-chat trong sidebar như bình thường. Từ giờ Python quyết định mọi tool call,
-và tài liệu thật sẽ bị sửa qua bridge — không cần thay đổi gì ở frontend.
+chat trong sidebar như bình thường. Python quyết định mọi tool call, và tài
+liệu thật sẽ bị sửa qua bridge — không cần thay đổi gì ở frontend.
 
-### Quay lại backend cũ (tắt Python)
-
-Đặt `AGENT_BRAIN_MODE=tanstack` trong `.env` ở gốc repo, khởi động lại
-`pnpm dev` — không cần chạy `agent_server.py` nữa, chat dùng lại
-`@tanstack/ai` như trước khi có tính năng này.
+**Lưu ý:** không còn nhánh dự phòng nào nữa — nếu quên chạy
+`agent_server.py`, gửi chat sẽ báo lỗi kết nối (`RUN_ERROR`) thay vì rơi về
+một backend khác.
 
 ## Giới hạn quan trọng
 
 - **Chỉ chạy được ở local dev.** `agent_server.py` và route
   `/api/agent-bridge/tool` không chạy được trên bản deploy Cloudflare
-  Workers (Python không chạy trên Workers). Đừng bật
-  `AGENT_BRAIN_MODE=python` trên môi trường đã deploy.
+  Workers (Python không chạy trên Workers) — **chat không hoạt động trên bản
+  deploy** trừ khi bạn tự trỏ `PYTHON_AGENT_BASE_URL` sang một Python server
+  host riêng, có thể truy cập công khai.
 - **`AGENT_BRIDGE_SECRET` là ranh giới bảo mật duy nhất** của route
   `/api/agent-bridge/tool` — vì route này thực thi chỉnh sửa tài liệu thật,
   đừng bao giờ để trống giá trị này hay tắt kiểm tra secret.

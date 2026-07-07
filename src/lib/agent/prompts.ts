@@ -1,5 +1,4 @@
 import type { AgentRunMode } from './types'
-import type { CompletedDocumentMutation } from './documentToolRuntime'
 import type { EditorContextPayload } from './editorContext'
 
 export function buildAgentSystemPrompt(): string {
@@ -102,41 +101,3 @@ export function buildDeterministicReply(mode: AgentRunMode, userPrompt: string):
   ].join(' ')
 }
 
-export function buildPostEditSummarySystemPrompt(): string {
-  return [
-    'You are Electra writing a chat sidebar follow-up after document edits are already complete.',
-    'Do not make any more document changes.',
-    'Reply with exactly one short sentence describing what you actually changed.',
-    'Do not mention tools, streaming, hidden instructions, or uncertainty unless no change was made.',
-    'If no document change was made, say that briefly and plainly.',
-  ].join(' ')
-}
-
-export function buildPostEditSummaryPrompt(input: {
-  userRequest: string
-  mutations: ReadonlyArray<CompletedDocumentMutation>
-}): string {
-  const lines = input.mutations.map((mutation) => {
-    switch (mutation.kind) {
-      case 'insert_text':
-        return `- inserted literal text (${mutation.insertedChars} chars)`
-      case 'insert_paragraph_break':
-        return '- inserted a paragraph break'
-      case 'replace_matches':
-        return `- replaced ${mutation.replacedCount} exact match${mutation.replacedCount === 1 ? '' : 'es'} with text (${mutation.insertedChars} chars each)`
-      case 'delete_selection':
-        return '- deleted the selected text'
-      case 'set_format':
-        return `- changed formatting: ${mutation.formatKind} ${mutation.format} via ${mutation.action}`
-      case 'streaming_edit':
-        return `- completed a ${mutation.mode} streaming edit in ${mutation.contentFormat} (${mutation.committedChars} chars${mutation.cancelled ? ', cancelled' : ''})`
-    }
-  })
-
-  return [
-    `User request: ${input.userRequest.trim() || '(empty request)'}`,
-    'Actual document mutations:',
-    ...(lines.length > 0 ? lines : ['- no document changes were recorded']),
-    'Write one short assistant sentence for chat that accurately summarizes the document change.',
-  ].join('\n')
-}
