@@ -2,9 +2,12 @@
 
 Tài liệu này mô tả **chi tiết, từng bước một, ở mức code thật**, hai luồng
 tương tác chính giữa người dùng — trình soạn thảo (ProseMirror/Yjs) — AI
-agent trong `collaborative-ai-editor`. Tài liệu được viết cho người **mới**
-tìm hiểu dự án, nên có thêm phần giải thích khái niệm nền tảng và chú thích
-"vì sao" ở mỗi bước, không chỉ "cái gì".
+agent trong `collaborative-ai-editor`, cộng với hướng dẫn chạy toàn bộ dự án.
+Tài liệu này gộp lại nội dung của `AGENT_FLOWS.md` và
+`src/routes/api/agent-python-demo/README.md` cũ (nay không còn tách riêng)
+thành một nguồn duy nhất, để tránh trùng lặp. Tài liệu được viết cho người
+**mới** tìm hiểu dự án, nên có thêm phần giải thích khái niệm nền tảng và chú
+thích "vì sao" ở mỗi bước, không chỉ "cái gì".
 
 Hai luồng:
 
@@ -13,9 +16,10 @@ Hai luồng:
 2. **Luồng vùng chọn** — người dùng **bôi đen một đoạn văn bản** rồi yêu cầu
    agent chỉnh sửa đúng đoạn đó.
 
-Backend duy nhất hiện nay: Python (`agent_server.py`) quyết định gọi tool,
-Node thực thi tool thật qua `DocumentToolRuntime`. Không còn nhánh dự phòng
-nào khác trong dự án (bản `@tanstack/ai` cũ đã bị xóa hoàn toàn).
+Backend duy nhất hiện nay: Python (`agent_server.py`) quyết định gọi tool
+**và tự dựng system prompt tiếng Việt** (`prompts.py`), Node thực thi tool
+thật qua `DocumentToolRuntime`. Không còn nhánh dự phòng nào khác trong dự án
+(bản `@tanstack/ai` cũ đã bị xóa hoàn toàn).
 
 ---
 
@@ -56,6 +60,9 @@ Nếu bạn chưa quen các khái niệm dưới đây, đọc nhanh phần này
 - **System prompt** — đoạn hướng dẫn cố định gửi kèm mỗi lần gọi model, mô tả
   model nên đóng vai gì, có tool gì, quy tắc nào phải tuân theo. Đây không
   phải nội dung người dùng gõ, mà là "luật chơi" lập trình viên định sẵn.
+  Trong dự án này, system prompt được viết bằng **tiếng Việt** và được dựng
+  hoàn toàn trong Python (xem mục "Vì sao Python tự dựng system prompt" bên
+  dưới).
 - **Streaming** — thay vì đợi model tạo xong toàn bộ câu trả lời rồi gửi một
   lần, model gửi từng mẩu nhỏ (token/từ) ngay khi vừa sinh ra, giúp người
   dùng thấy chữ "chạy" dần trên màn hình thay vì đợi rồi hiện ra một cục.
@@ -123,6 +130,37 @@ hay tương tự, đây chính là nơi cần thêm code xử lý ở `ChatSideb
 
 ---
 
+## Vì sao Python tự dựng system prompt
+
+Ban đầu dự án này chọn "Node là nguồn sự thật duy nhất cho system prompt":
+`chat.ts` dựng sẵn một chuỗi tiếng Anh rồi gửi nguyên văn sang Python qua
+`/agent/run`. Quyết định đó đã bị **đảo ngược** — giờ đây:
+
+- Node (`chat.ts`) chỉ gửi **nguyên liệu thô**: `editorContextKind`
+  (`'cursor'` | `'selection'` | `null`), `selectedText` (văn bản đã chọn, nếu
+  có), `mode`, và lịch sử tin nhắn. Node **không còn** tự ghép câu hướng dẫn
+  nào cả.
+- Python (`agent-server/prompts.py`) tự dựng toàn bộ
+  system prompt bằng **tiếng Việt** từ 2 hàm:
+  - `build_chat_tool_system_prompt(preferred_mode)` (`prompts.py:17`) — phần
+    hướng dẫn chung về các tool và quy tắc chỉnh sửa (tương đương
+    `buildChatToolSystemPrompt` cũ bên TypeScript, nay đã xoá).
+  - `build_editor_context_system_prompt(kind, selected_text)`
+    (`prompts.py:133`) — phần hướng dẫn riêng theo `cursor`/`selection`
+    (tương đương `buildEditorContextSystemPrompt` cũ, nay đã xoá).
+- `agent_server.py` ghép 2 phần này lại (route `/agent/run`) ngay trước khi
+  bắt đầu vòng lặp gọi OpenAI.
+
+Tên tool (`get_document_snapshot`, `start_streaming_edit`, ...) vẫn giữ
+nguyên tiếng Anh trong prompt vì đó là identifier JSON thật model phải gọi
+đúng — chỉ có câu văn hướng dẫn xung quanh được viết bằng tiếng Việt.
+
+Hệ quả cần nhớ: `src/lib/agent/prompts.ts` (TypeScript) đã bị **xoá hoàn
+toàn** — không còn tồn tại trong repo. Nếu bạn cần sửa hướng dẫn agent, sửa
+`prompts.py`, không phải phía Node.
+
+---
+
 ## Sơ đồ kiến trúc tổng thể
 
 ```mermaid
@@ -134,7 +172,7 @@ graph LR
 
     subgraph NodeApp["Node — TanStack Start (chat.ts)"]
         ChatRoute["POST /api/chat<br/>agentResponseStream"]
-        Bridge["POST /api/agent-bridge/tool"]
+        Bridge["POST /api/agent/bridge-tool"]
         Runtime["DocumentToolRuntime<br/>(Yjs + ProseMirror thật)"]
     end
 
@@ -146,7 +184,7 @@ graph LR
     YjsServer["Durable Streams<br/>Yjs server :4438"]
 
     Chat -- "1) messages + editorContext" --> ChatRoute
-    ChatRoute -- "2) systemPrompt + messages + mode" --> Loop
+    ChatRoute -- "2) editorContextKind + selectedText + messages + mode" --> Loop
     Loop -- "3) chat completions create stream" --> OpenAI
     Loop -- "4) runId name input + bridge token" --> Bridge
     Bridge --> Runtime
@@ -162,12 +200,16 @@ graph LR
    `useChat` gửi `POST /api/chat` kèm toàn bộ lịch sử tin nhắn + `editorContext`
    (cursor hoặc selection hiện tại).
 2. **ChatRoute → Loop** — `chat.ts` tạo `DocumentToolRuntime` thật (kết nối
-   Yjs), dựng system prompt phù hợp, rồi gửi `POST /agent/run` sang
-   `agent_server.py` kèm system prompt + lịch sử tin nhắn + mode gợi ý.
-3. **Loop → OpenAI** — Python bắt đầu vòng lặp: gọi OpenAI với chế độ
-   streaming (`stream=True`) và danh sách 17 tool khả dụng.
+   Yjs), đọc `selectionSnapshot` nếu có vùng chọn, rồi gửi `POST /agent/run`
+   sang `agent_server.py` kèm `editorContextKind` (`'cursor'`/`'selection'`/
+   `null`), `selectedText`, lịch sử tin nhắn, và mode gợi ý — **Node không
+   còn tự dựng system prompt nào cả**, Python tự làm việc đó (xem "Vì sao
+   Python tự dựng system prompt" phía trên).
+3. **Loop → OpenAI** — Python dựng system prompt tiếng Việt từ nguyên liệu
+   vừa nhận, rồi bắt đầu vòng lặp: gọi OpenAI với chế độ streaming
+   (`stream=True`) và danh sách 17 tool khả dụng.
 4. **Loop → Bridge** — Mỗi khi model quyết định gọi một tool, Python validate
-   tham số bằng `pydantic` rồi gọi ngược về Node qua `POST /api/agent-bridge/tool`,
+   tham số bằng `pydantic` rồi gọi ngược về Node qua `POST /api/agent/bridge-tool`,
    kèm `runId` (để biết đang thao tác trên tài liệu nào) và một token bí mật
    (`AGENT_BRIDGE_SECRET`) để xác thực.
 5. **Bridge → Runtime → YjsServer** — Node xác thực token, tra `runId` ra
@@ -209,21 +251,21 @@ chat, không tự nó ghi gì vào tài liệu cả.
 
 | File | Vai trò |
 |---|---|
-| `src/routes/api/chat.ts` | `agentResponseStream` — tạo `DocumentToolRuntime`, build system prompt, gọi `runPythonAgentStream`, dọn dẹp. Đây là route duy nhất, không còn nhánh rẽ nào khác |
+| `src/routes/api/chat.ts` | `agentResponseStream` — tạo `DocumentToolRuntime`, tính `editorContextKind`/`selectedText` từ `selectionSnapshot`, gọi `runPythonAgentStream`, dọn dẹp. Đây là route duy nhất, không còn nhánh rẽ nào khác |
 | `src/lib/agent/chatStreamRouting.ts` | `parseChatBody` (đọc `editorContext`/`agentMode` từ request), `routeAgentStreamChunks` (chặn `TEXT_MESSAGE_*` khi đang streaming edit) |
-| `src/lib/agent/prompts.ts` | `buildChatToolSystemPrompt(mode)`, `buildEditorContextSystemPrompt({editorContext, selectedText})` |
 | `src/lib/agent/documentToolRuntime.ts` | `applyEditorContext` (nhánh cursor/selection), `getDocumentSnapshot`, `getSelectionSnapshot`, `startStreamingEdit` (3 nhánh mode), `pushStreamingText`, `stopStreamingEdit` |
 | `src/lib/agent/documentToolDispatch.ts` | `executeDocumentTool`, `DOCUMENT_TOOL_SCHEMAS` — nguồn sự thật duy nhất cho schema (zod) + custom event của cả 17 tool |
-| `src/lib/agent/pythonBridgeRegistry.ts`, `src/routes/api/agent-bridge/tool.ts` | Đăng ký `DocumentToolRuntime` theo `runId`, xác thực `AGENT_BRIDGE_SECRET`, gọi `executeDocumentTool` để thực thi tool thật |
-| `src/lib/agent/pythonAgentBridge.ts` | `runPythonAgentStream` — dịch NDJSON từ Python thành `StreamChunk`/`AGUIEvent` |
+| `src/lib/agent/pythonBridgeRegistry.ts`, `src/routes/api/agent/bridge-tool.ts` | Đăng ký `DocumentToolRuntime` theo `runId`, xác thực `AGENT_BRIDGE_SECRET`, gọi `executeDocumentTool` để thực thi tool thật |
+| `src/lib/agent/pythonAgentBridge.ts` | `runPythonAgentStream` — gửi `editorContextKind`/`selectedText`/`mode`/`messages` sang Python, dịch NDJSON trả về thành `StreamChunk`/`AGUIEvent` |
 | `src/lib/agent/serverAgentSession.ts` | Agent nối vào Yjs như một peer thật, quản lý awareness status (`thinking`/`composing`/`idle`) |
 
 ### Backend Python (bộ não thật — bắt buộc phải chạy để chat hoạt động)
 
 | File | Vai trò |
 |---|---|
-| `src/routes/api/agent-python-demo/agent_server.py` | `stream_agent_run` — vòng lặp tool-calling streaming thật (OpenAI), theo dõi `MUTATING_TOOLS`, tự sinh câu tóm tắt cho chat khi cần |
-| `src/routes/api/agent-python-demo/agent_shared.py` | Schema `pydantic` cho 17 tool (tên/tham số khớp 100% với `documentToolDispatch.ts` phía Node), `build_openai_tools()` |
+| `agent-server/agent_server.py` | `stream_agent_run` — vòng lặp tool-calling streaming thật (OpenAI), theo dõi `MUTATING_TOOLS`, tự sinh câu tóm tắt cho chat khi cần. Route `/agent/run` dựng `system_prompt` qua `prompts.py` trước khi vào vòng lặp |
+| `agent-server/prompts.py` | `build_chat_tool_system_prompt(mode)`, `build_editor_context_system_prompt(kind, selected_text)` — dựng system prompt **tiếng Việt**, nguồn sự thật duy nhất cho hướng dẫn agent (Node không còn gửi prompt dựng sẵn nữa) |
+| `agent-server/agent_shared.py` | Schema `pydantic` cho 17 tool (tên/tham số khớp 100% với `documentToolDispatch.ts` phía Node), `build_openai_tools()` |
 
 ---
 
@@ -248,7 +290,7 @@ sequenceDiagram
     participant NodeChat as chat.ts (Node)
     participant Py as agent_server.py
     participant AI as OpenAI
-    participant Bridge as agent-bridge/tool.ts
+    participant Bridge as agent/bridge-tool.ts
     participant RT as DocumentToolRuntime
     participant Yjs as Durable Streams Yjs server
 
@@ -259,17 +301,17 @@ sequenceDiagram
     Chat->>NodeChat: POST /api/chat {messages, data:{editorContext}}
     NodeChat->>RT: DocumentToolRuntime.create({editorContext})
     RT->>RT: applyEditorContext (nhánh cursor): xoá vùng chọn cũ, đặt cursor
-    NodeChat->>NodeChat: buildChatToolSystemPrompt + buildEditorContextSystemPrompt (nhánh cursor)
-    NodeChat->>Py: POST /agent/run {systemPrompt, messages, mode}
+    NodeChat->>Py: POST /agent/run {editorContextKind:'cursor', selectedText:null, messages, mode}
+    Py->>Py: build_chat_tool_system_prompt + build_editor_context_system_prompt (nhánh cursor, tiếng Việt)
     Py->>AI: chat.completions.create(stream=True, tools=...)
     AI-->>Py: tool_call get_document_snapshot
-    Py->>Bridge: POST /api/agent-bridge/tool {name:'get_document_snapshot'}
+    Py->>Bridge: POST /api/agent/bridge-tool {name:'get_document_snapshot'}
     Bridge->>RT: executeDocumentTool -> runtime.getDocumentSnapshot()
     RT-->>Bridge: toàn bộ văn bản tài liệu
     Bridge-->>Py: {ok:true, result}
     Py->>AI: gửi lại kết quả tool, tiếp tục vòng lặp
     AI-->>Py: tool_call start_streaming_edit(mode:'continue')
-    Py->>Bridge: POST /api/agent-bridge/tool {name:'start_streaming_edit'}
+    Py->>Bridge: POST /api/agent/bridge-tool {name:'start_streaming_edit'}
     Bridge->>RT: startStreamingEdit('continue', ...) — neo tại cuối tài liệu
     Py->>AI: tiếp tục vòng lặp
     AI-->>Py: stream văn xuôi (không còn tool call)
@@ -320,18 +362,27 @@ trường `data` của mỗi request (qua hàm `getSendData`), rồi POST tới
 mọi vùng chọn còn sót từ lượt trước, đặt `cursorAnchorBytes` theo đúng vị trí
 frontend gửi lên.
 
-**Bước 5 — Dựng system prompt phù hợp với "không có selection".**
-`buildEditorContextSystemPrompt` nhánh cursor (`prompts.ts:72-76`) sinh ra
-đoạn hướng dẫn: *"người dùng đang có một vị trí con trỏ hoạt động; khi họ nói
-'ở đây', hãy dùng đúng con trỏ này; nếu cần thêm ngữ cảnh hãy gọi
-`get_cursor_context` hoặc `get_document_snapshot`"*. Đoạn này được ghép cùng
-system prompt tool chính (`buildChatToolSystemPrompt`) rồi gửi sang Python.
+**Bước 5 — Node gửi nguyên liệu thô, Python tự dựng system prompt phù hợp
+với "không có selection".**
+`chat.ts` gửi `editorContextKind: 'cursor'` và `selectedText: null` sang
+Python qua `/agent/run` — **không** kèm bất kỳ system prompt dựng sẵn nào.
+`agent_server.py` nhận request rồi gọi
+`build_editor_context_system_prompt('cursor', None)` (`prompts.py:161-169`,
+nhánh cursor) sinh ra đoạn hướng dẫn tiếng Việt: *"Người dùng đang có một vị
+trí con trỏ hoạt động...; khi họ nói 'ở đây' hãy dùng đúng con trỏ này; nếu
+cần thêm ngữ cảnh hãy gọi get_cursor_context hoặc get_document_snapshot"*.
+Đoạn này được ghép cùng system prompt tool chính
+(`build_chat_tool_system_prompt`, `prompts.py:17-130`) ngay trong
+`agent_server.py`, trước khi bắt đầu vòng lặp gọi OpenAI.
 
 **Bước 6 — Model tự đọc toàn bộ tài liệu.**
 Vì không biết "đoạn văn hiện có nội dung gì, giọng văn ra sao", model thường
 gọi `get_document_snapshot` (`documentToolRuntime.ts:439-453`) trước tiên —
 đây chính là bước "đọc qua toàn bộ văn bản" trong tên gọi luồng này. Tool này
-chỉ đọc, không sửa gì, nên không phát custom event nào.
+chỉ đọc, không sửa gì, nên không phát custom event nào. Với tài liệu dài,
+system prompt đã hướng dẫn model gọi lại tool này nhiều lần (`startChar` =
+`endChar` của lần trước) cho tới khi `hasMore` là `false` — xem phụ lục
+17 tool bên dưới.
 
 **Bước 7 — Bắt đầu chế độ streaming edit.**
 Model gọi `start_streaming_edit({ mode: 'continue' | 'insert' })`
@@ -386,7 +437,7 @@ sequenceDiagram
     participant NodeChat as chat.ts (Node)
     participant Py as agent_server.py
     participant AI as OpenAI
-    participant Bridge as agent-bridge/tool.ts
+    participant Bridge as agent/bridge-tool.ts
     participant RT as DocumentToolRuntime
     participant Yjs as Durable Streams Yjs server
 
@@ -397,15 +448,16 @@ sequenceDiagram
     Chat->>NodeChat: POST /api/chat {messages, data:{editorContext}}
     NodeChat->>RT: DocumentToolRuntime.create({editorContext})
     RT->>RT: applyEditorContext (nhánh selection): lưu selectionStart/EndBytes, cursor=max(start,head)
-    NodeChat->>NodeChat: buildEditorContextSystemPrompt (nhánh selection) — trích nguyên văn bản đã chọn vào prompt
-    NodeChat->>Py: POST /agent/run {systemPrompt, messages, mode}
+    NodeChat->>RT: getSelectionSnapshot() -> selectedText
+    NodeChat->>Py: POST /agent/run {editorContextKind:'selection', selectedText, messages, mode}
+    Py->>Py: build_chat_tool_system_prompt + build_editor_context_system_prompt (nhánh selection, tiếng Việt) — trích nguyên văn bản đã chọn vào prompt
     Py->>AI: chat.completions.create(stream=True, tools=...)
     AI-->>Py: tool_call get_selection_snapshot (tuỳ chọn, để xác nhận)
     Py->>Bridge: thực thi get_selection_snapshot
     Bridge->>RT: runtime.getSelectionSnapshot()
     RT-->>Py: {text, from, to, before, after}
     AI-->>Py: tool_call start_streaming_edit(mode:'rewrite')
-    Py->>Bridge: POST /api/agent-bridge/tool {name:'start_streaming_edit', input:{mode:'rewrite'}}
+    Py->>Bridge: POST /api/agent/bridge-tool {name:'start_streaming_edit', input:{mode:'rewrite'}}
     Bridge->>RT: startStreamingEdit('rewrite', ...)
     RT->>RT: kiểm tra có selection đang hoạt động — nếu KHÔNG thì ném lỗi
     RT->>Yjs: xoá ngay vùng chọn, neo vị trí chèn tại đúng chỗ vừa xoá
@@ -461,12 +513,17 @@ mã cả hai anchor thành vị trí thật trong tài liệu, lưu vào
 sau này), và đặt con trỏ hiển thị tại vị trí lớn hơn giữa hai điểm (để giả lập
 đúng chỗ con trỏ "thật" sẽ nằm sau khi người dùng bôi đen bằng chuột/bàn phím).
 
-**Bước 4 — System prompt trích dẫn thẳng nội dung đã chọn.**
-Đây là khác biệt quan trọng nhất so với luồng 1: `buildEditorContextSystemPrompt`
-nhánh `selection` (`prompts.ts:61-71`) **nhúng thẳng văn bản đã chọn** (tối đa
-240 ký tự) vào ngay trong system prompt, kiểu *"Selected text: "câu văn bạn đã
-chọn""*. Luồng 1 không bao giờ làm vậy — nó chỉ hướng dẫn model tự gọi tool để
-đọc, không nhét sẵn nội dung tài liệu vào prompt.
+**Bước 4 — Node đọc văn bản đã chọn, Python nhúng thẳng nó vào system
+prompt.**
+Đây là khác biệt quan trọng nhất so với luồng 1: `chat.ts` gọi
+`runtime.getSelectionSnapshot()` để lấy văn bản đã chọn, gửi nó sang Python
+qua trường `selectedText`. `agent_server.py` gọi
+`build_editor_context_system_prompt('selection', selectedText)`
+(`prompts.py:141-159`, nhánh selection) — hàm này **nhúng thẳng văn bản đã
+chọn** (tối đa 240 ký tự) vào ngay trong system prompt tiếng Việt, kiểu
+*"Vùng chọn hiện tại: "câu văn bạn đã chọn""*. Luồng 1 không bao giờ làm vậy —
+nó chỉ hướng dẫn model tự gọi tool để đọc, không nhét sẵn nội dung tài liệu
+vào prompt.
 
 **Bước 5 — Model chọn 1 trong 2 hướng xử lý.**
 Model tự quyết định: nếu yêu cầu đơn giản, gọi thẳng một tool sửa tức thời
@@ -505,7 +562,7 @@ chưa từng xoá gì để phải khôi phục.
 | `editorContext` gửi lên | `{kind:'cursor', anchor}` hoặc không có | `{kind:'selection', anchor, head}` |
 | `applyEditorContext` | Xoá vùng chọn cũ, đặt cursor | Đặt `selectionStart/EndBytes` + cursor = `max(start, head)` |
 | Nội dung tài liệu có được nhúng vào system prompt? | Không — chỉ hướng dẫn gọi tool | Có — trích nguyên văn bản đã chọn (≤240 ký tự) |
-| Tool đọc chính | `get_document_snapshot` (đọc toàn bộ) | `get_selection_snapshot` (trả `null` nếu không có selection) |
+| Tool đọc chính | `get_document_snapshot` (đọc toàn bộ, theo chunk nếu tài liệu dài) | `get_selection_snapshot` (trả `null` nếu không có selection) |
 | `insert_text` khi có/không selection | Chèn tại vị trí con trỏ | Thay thế toàn bộ vùng chọn |
 | `set_format` | Không dùng được (ném lỗi nếu gọi) | Bắt buộc phải có selection mới chạy được |
 | `start_streaming_edit` mode | `continue` (neo cuối tài liệu) hoặc `insert` (neo tại cursor) — **không xoá gì** | `rewrite` — **bắt buộc có selection**, xoá selection ngay khi arm |
@@ -523,7 +580,7 @@ phía Node lẫn bảng đối chiếu tên/tham số phía Python trong `agent_
 
 | Tool | Dùng trong luồng |
 |---|---|
-| `get_document_snapshot` | Toàn văn bản |
+| `get_document_snapshot` | Toàn văn bản — đọc theo từng **đoạn (chunk)** tối đa `maxChars` ký tự (200-12000, mặc định 6000) bắt đầu từ `startChar`; trả về kèm `hasMore` (còn phần chưa đọc hay không). Với tài liệu dài hơn một đoạn, model được hướng dẫn (trong system prompt và mô tả tool) gọi lại nhiều lần với `startChar` = `endChar` của lần trước, cho tới khi `hasMore` là `false`, trước khi coi là đã đọc hết tài liệu |
 | `get_selection_snapshot` | Vùng chọn |
 | `get_cursor_context` | Toàn văn bản |
 | `search_text` | Cả hai (tìm vị trí trước khi sửa) |
@@ -564,6 +621,96 @@ diện (xem "Ba sự thật quan trọng", mục 3).
 
 ---
 
+## Bảng đối chiếu với agent thật (TypeScript)
+
+| Trong `agent_server.py`/`prompts.py` | Tương ứng trong dự án thật |
+|---|---|
+| Các model `pydantic.BaseModel` cho từng tool (`agent_shared.py`) | Các schema `zod` trong `src/lib/agent/documentToolDispatch.ts` |
+| 17 tool cùng tên, cùng tham số | `executeDocumentTool()` trong `src/lib/agent/documentToolDispatch.ts` |
+| System prompt tự dựng bằng tiếng Việt (`build_chat_tool_system_prompt`/`build_editor_context_system_prompt` trong `prompts.py`) | Không còn tương đương bên Node — trước đây là `prompts.ts` (đã xoá), giờ Python là nguồn sự thật duy nhất |
+| Vòng lặp `while True` tường minh trong `stream_agent_run()` | Không có tương đương — đây là bộ não thật duy nhất, không có vòng lặp nào khác trong dự án |
+| Tự gọi thêm 1 lần model không kèm tool để tóm tắt khi cần | Tự làm hoàn toàn trong `agent_server.py` (`had_mutation`/`chat_message_sent`), không có phía TypeScript |
+| `POST /api/agent/bridge-tool` (thực thi tool thật) | `DocumentToolRuntime` trong `src/lib/agent/documentToolRuntime.ts` |
+
+---
+
+## Hướng dẫn chạy toàn bộ dự án (frontend + backend)
+
+Cần **3 tiến trình** chạy song song. Mở 3 terminal khác nhau.
+
+### 1. Cấu hình biến môi trường
+
+**Ở gốc repo**, file `.env` (đã có sẵn giá trị mẫu — chỉnh nếu cần):
+```
+AGENT_BRIDGE_SECRET=<một chuỗi bí mật bất kỳ>
+PYTHON_AGENT_BASE_URL=http://127.0.0.1:8787
+```
+
+**Trong thư mục** `agent-server/`, tạo `.env` từ
+`.env.example`:
+```
+OPENAI_API_KEY=sk-...           # key OpenAI thật
+OPENAI_MODEL=gpt-5.4
+AGENT_BRIDGE_SECRET=<CÙNG giá trị với .env ở gốc repo>
+NODE_BRIDGE_BASE_URL=http://localhost:3000
+PYTHON_AGENT_PORT=8787
+```
+
+### 2. Backend Node (app + Durable Streams + Yjs) — Terminal 1
+
+```bash
+# ở gốc repo
+pnpm install     # nếu chưa cài
+pnpm dev
+```
+
+Lệnh này chạy cùng lúc: app TanStack Start (`localhost:3000`), Durable
+Streams server (`127.0.0.1:4437`), và Yjs server (`127.0.0.1:4438`).
+
+### 3. Backend Python (agent thật) — Terminal 2
+
+```bash
+cd agent-server
+python -m venv .venv
+# Windows PowerShell:
+.venv\Scripts\Activate.ps1
+# Bash/Git Bash:
+source .venv/Scripts/activate
+
+pip install -r requirements.txt
+python agent_server.py
+```
+
+Log sẽ báo `agent_server.py đang lắng nghe tại http://127.0.0.1:8787`.
+
+### 4. Frontend — Terminal 3 (hoặc trình duyệt)
+
+Mở `http://localhost:3000`, nhập tên tài liệu để tạo/tham gia phòng, rồi
+chat trong sidebar như bình thường. Python quyết định mọi tool call và tự
+dựng system prompt tiếng Việt, tài liệu thật sẽ bị sửa qua bridge — không
+cần thay đổi gì ở frontend.
+
+**Lưu ý:** không còn nhánh dự phòng nào nữa — nếu quên chạy
+`agent_server.py`, gửi chat sẽ báo lỗi kết nối (`RUN_ERROR`) thay vì rơi về
+một backend khác.
+
+## Giới hạn quan trọng
+
+- **Chỉ chạy được ở local dev.** `agent_server.py` và route
+  `/api/agent/bridge-tool` không chạy được trên bản deploy Cloudflare
+  Workers (Python không chạy trên Workers) — **chat không hoạt động trên bản
+  deploy** trừ khi bạn tự trỏ `PYTHON_AGENT_BASE_URL` sang một Python server
+  host riêng, có thể truy cập công khai.
+- **`AGENT_BRIDGE_SECRET` là ranh giới bảo mật duy nhất** của route
+  `/api/agent/bridge-tool` — vì route này thực thi chỉnh sửa tài liệu thật,
+  đừng bao giờ để trống giá trị này hay tắt kiểm tra secret.
+- **Huỷ chạy (bấm "stop") không dừng ngay lập tức** vòng lặp Python đang
+  chạy dở — `agent_server.py` chỉ kiểm tra cờ huỷ giữa các bước (giữa các
+  lần gọi model / trong lúc đang stream), không ngắt được một request
+  OpenAI đã gửi đi.
+
+---
+
 ## Bảng thuật ngữ nhanh (tra cứu)
 
 | Thuật ngữ | Giải thích ngắn gọn |
@@ -574,7 +721,9 @@ diện (xem "Ba sự thật quan trọng", mục 3).
 | Anchor | Vị trí trong tài liệu, mã hoá kiểu Yjs relative position, "trôi" theo đúng ngữ nghĩa khi tài liệu bị sửa |
 | `matchId` | Định danh tạm cho một kết quả tìm kiếm (`search_text`), dùng làm tham số cho các tool khác như `place_cursor`, `select_text` |
 | `editSessionId` | Định danh một phiên streaming edit đang mở |
-| System prompt | Hướng dẫn cố định cho model, không phải nội dung người dùng gõ |
+| System prompt | Hướng dẫn cố định cho model, viết bằng tiếng Việt, dựng hoàn toàn trong `prompts.py` (Python) |
+| `editorContextKind`/`selectedText` | Nguyên liệu thô Node gửi sang Python qua `/agent/run` để Python tự dựng phần system prompt theo ngữ cảnh (thay cho việc gửi thẳng một prompt dựng sẵn) |
 | `StreamChunk`/`AGUIEvent` | Định dạng chuẩn cho một "mẩu tin" trong dòng stream chat |
 | `CUSTOM` event | Loại `StreamChunk` tự do, dùng để gửi sự kiện riêng của ứng dụng (không phải chuẩn chat thông thường) |
 | `AGENT_BRIDGE_SECRET` | Chuỗi bí mật xác thực request từ Python gọi ngược vào Node — không phải để xác thực người dùng |
+| `hasMore` | Cờ trả về bởi `get_document_snapshot` báo hiệu tài liệu còn phần chưa đọc hết trong đoạn (chunk) vừa lấy — model dùng nó để biết có cần gọi lại tool với `startChar` mới hay không |

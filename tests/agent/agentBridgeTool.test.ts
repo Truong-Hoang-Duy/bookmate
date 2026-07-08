@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { DocumentToolRuntime } from '../../src/lib/agent/documentToolRuntime'
 import { registerBridgeRun, releaseBridgeRun } from '../../src/lib/agent/pythonBridgeRegistry'
-import { handleAgentBridgeToolRequest } from '../../src/routes/api/agent-bridge/tool'
+import { handleAgentBridgeToolRequest } from '../../src/routes/api/agent/bridge-tool'
 import { createTestSession, readDocText } from './testUtils'
 
 const SECRET = 'test-secret'
 
 function postTool(body: unknown, headers: Record<string, string> = { 'X-Agent-Bridge-Token': SECRET }) {
   return handleAgentBridgeToolRequest(
-    new Request('http://localhost/api/agent-bridge/tool', {
+    new Request('http://localhost/api/agent/bridge-tool', {
       method: 'POST',
       headers,
       body: JSON.stringify(body),

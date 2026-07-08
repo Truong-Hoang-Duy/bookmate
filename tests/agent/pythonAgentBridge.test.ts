@@ -61,7 +61,8 @@ describe('runPythonAgentStream (NDJSON -> AGUIEvent translation)', () => {
       runPythonAgentStream({
         runId: 'run-1',
         messages: [{ role: 'user', content: 'hi' }],
-        systemPrompt: 'system',
+        editorContextKind: null,
+        selectedText: null,
         mode: 'insert',
         abortController: new AbortController(),
       }),
@@ -93,7 +94,8 @@ describe('runPythonAgentStream (NDJSON -> AGUIEvent translation)', () => {
       runPythonAgentStream({
         runId: 'run-2',
         messages: [],
-        systemPrompt: 'system',
+        editorContextKind: null,
+        selectedText: null,
         mode: 'insert',
         abortController: new AbortController(),
       }),
@@ -121,7 +123,8 @@ describe('runPythonAgentStream (NDJSON -> AGUIEvent translation)', () => {
       runPythonAgentStream({
         runId: 'run-3',
         messages: [],
-        systemPrompt: 'system',
+        editorContextKind: null,
+        selectedText: null,
         mode: 'insert',
         abortController: new AbortController(),
       }),
@@ -143,7 +146,8 @@ describe('runPythonAgentStream (NDJSON -> AGUIEvent translation)', () => {
     const pythonStream = runPythonAgentStream({
       runId: 'run-4',
       messages: [],
-      systemPrompt: 'system',
+      editorContextKind: null,
+      selectedText: null,
       mode: 'insert',
       abortController: new AbortController(),
     })

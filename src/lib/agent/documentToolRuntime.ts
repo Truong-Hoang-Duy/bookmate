@@ -439,7 +439,7 @@ export class DocumentToolRuntime {
   getDocumentSnapshot(
     maxChars: number = 6000,
     startChar: number = 0,
-  ): { text: string; charCount: number; startChar: number; endChar: number } {
+  ): { text: string; charCount: number; startChar: number; endChar: number; hasMore: boolean } {
     const { doc } = this.getMapping()
     const text = doc.textBetween(0, doc.content.size, '\n\n', '\n')
     const safeStart = Math.max(0, Math.min(startChar, text.length))
@@ -449,6 +449,7 @@ export class DocumentToolRuntime {
       charCount: text.length,
       startChar: safeStart,
       endChar: safeEnd,
+      hasMore: safeEnd < text.length,
     }
   }
 

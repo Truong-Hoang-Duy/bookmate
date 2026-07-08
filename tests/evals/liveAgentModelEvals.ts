@@ -885,7 +885,7 @@ async function main() {
   }
   if (!(await isServerReachable(`${PYTHON_AGENT_BASE_URL}/docs`))) {
     console.error(
-      `Cannot reach the Python agent server at ${PYTHON_AGENT_BASE_URL}. Start it first with "python agent_server.py" (see src/routes/api/agent-python-demo/README.md).`,
+      `Cannot reach the Python agent server at ${PYTHON_AGENT_BASE_URL}. Start it first with "python agent_server.py" (see AGENT_FLOWS.md).`,
     )
     process.exit(1)
   }

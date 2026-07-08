@@ -2,7 +2,7 @@ import type { StreamChunk } from '@tanstack/ai'
 
 /**
  * Translates the Python agent server's simple NDJSON protocol (see
- * `src/routes/api/agent-python-demo/agent_server.py`) into the same
+ * `agent-server/agent_server.py`) into the same
  * `AGUIEvent`/`StreamChunk` shapes `@tanstack/ai`'s own `chat()` produces, so
  * the rest of the pipeline (`routeAgentStreamChunks`,
  * `toDurableChatSessionResponse`, and the real browser `useChat`) doesn't
@@ -19,7 +19,8 @@ import type { StreamChunk } from '@tanstack/ai'
 export interface PythonAgentRunInput {
   runId: string
   messages: Array<{ role: string; content: string }>
-  systemPrompt: string
+  editorContextKind: 'cursor' | 'selection' | null
+  selectedText: string | null
   mode: 'continue' | 'insert' | 'rewrite'
   abortController: AbortController
 }
@@ -53,26 +54,33 @@ export async function* runPythonAgentStream(input: PythonAgentRunInput): AsyncIt
 
   yield { type: 'RUN_STARTED', timestamp: Date.now(), runId: input.runId } as StreamChunk
 
-  // Best-effort: aborting the Node fetch alone doesn't stop Python's own
-  // in-flight OpenAI call/loop, so also tell it to stop via /agent/cancel.
   input.abortController.signal.addEventListener('abort', () => {
     fetch(`${baseUrl}/agent/cancel`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ runId: input.runId }),
     }).catch(() => {
-      // Nothing useful to do if the Python server is already gone.
+
     })
   })
 
   let response: Response
   try {
+    console.log({
+      runId: input.runId,
+      editorContextKind: input.editorContextKind,
+      selectedText: input.selectedText,
+      messages: input.messages,
+      mode: input.mode,
+    });
+
     response = await fetch(`${baseUrl}/agent/run`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         runId: input.runId,
-        systemPrompt: input.systemPrompt,
+        editorContextKind: input.editorContextKind,
+        selectedText: input.selectedText,
         messages: input.messages,
         mode: input.mode,
       }),
@@ -83,9 +91,8 @@ export async function* runPythonAgentStream(input: PythonAgentRunInput): AsyncIt
       type: 'RUN_ERROR',
       timestamp: Date.now(),
       error: {
-        message: `Không thể kết nối tới Python agent server (${baseUrl}). Đã chạy "python agent_server.py" chưa? Chi tiết: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        message: `Không thể kết nối tới Python agent server (${baseUrl}). Đã chạy "python agent_server.py" chưa? Chi tiết: ${error instanceof Error ? error.message : String(error)
+          }`,
       },
     } as StreamChunk
     return

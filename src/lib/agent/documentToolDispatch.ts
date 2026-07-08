@@ -5,10 +5,9 @@ import type { AgentRunMode } from './types'
 
 /**
  * Single source of truth for the 17 document tools' input schemas and
- * execution logic, shared by the real `@tanstack/ai` tool wiring
- * (`documentTools.ts`) and the Python-agent bridge route
- * (`src/routes/api/agent-bridge/tool.ts`). Framework-agnostic on purpose:
- * no `@tanstack/ai` types appear here.
+ * execution logic. The only caller in the live app is the Python-agent
+ * bridge route (`src/routes/api/agent/bridge-tool.ts`). Framework-agnostic
+ * on purpose: no `@tanstack/ai` types appear here.
  */
 export const DOCUMENT_TOOL_SCHEMAS = {
   get_document_snapshot: z.object({

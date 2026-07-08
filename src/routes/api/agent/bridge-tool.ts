@@ -4,11 +4,11 @@ import { getBridgeRun } from '../../../lib/agent/pythonBridgeRegistry'
 
 /**
  * Internal bridge route: the Python agent server (see
- * `src/routes/api/agent-python-demo/agent_server.py`) calls this to execute
- * a real document tool against the live `DocumentToolRuntime` for a chat run,
- * since Python cannot speak the Yjs CRDT protocol directly. Local-dev-only —
- * requires `AGENT_BRIDGE_SECRET` to be configured, and this route is not
- * meant to be reachable from a deployed/public environment.
+ * `agent-server/agent_server.py`) calls this to execute a real document tool
+ * against the live `DocumentToolRuntime` for a chat run, since Python cannot
+ * speak the Yjs CRDT protocol directly. Local-dev-only — requires
+ * `AGENT_BRIDGE_SECRET` to be configured, and this route is not meant to be
+ * reachable from a deployed/public environment.
  */
 export async function handleAgentBridgeToolRequest(request: Request): Promise<Response> {
   const expectedSecret = process.env.AGENT_BRIDGE_SECRET
@@ -65,7 +65,7 @@ export async function handleAgentBridgeToolRequest(request: Request): Promise<Re
   }
 }
 
-export const Route = createFileRoute('/api/agent-bridge/tool')({
+export const Route = createFileRoute('/api/agent/bridge-tool')({
   server: {
     handlers: {
       POST: async ({ request }: { request: Request }) => handleAgentBridgeToolRequest(request),

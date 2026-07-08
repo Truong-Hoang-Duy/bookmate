@@ -43,6 +43,7 @@ describe('document tool dispatch unit tests', () => {
       charCount: 21,
       startChar: 6,
       endChar: 15,
+      hasMore: true,
     })
     expect(search).toEqual({
       ok: true,

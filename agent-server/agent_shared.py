@@ -1,6 +1,5 @@
-"""Schema pydantic + tên/mô tả tool (tiếng Việt, dịch từ documentTools.ts /
-documentToolDispatch.ts thật) dùng chung cho agent_server.py. KHÔNG chứa
-system prompt — agent_server.py dùng system prompt thật do Node gửi sang qua
+"""Schema pydantic + tên/mô tả tool dùng chung cho agent_server.py. KHÔNG chứa
+system prompt — agent_server.py dùng system prompt do Node gửi sang qua
 `/agent/run`, không tự dịch riêng."""
 
 import json
@@ -30,10 +29,7 @@ def log_step(tag: str, event: str, **data: object) -> None:
 
 
 # --------------------------------------------------------------------------
-# Schema input cho tung tool (pydantic) - tuong duong vai tro cua zod trong
-# ban that (src/lib/agent/documentTools.ts / documentToolDispatch.ts). Ten
-# field giu nguyen dang camelCase de khop chinh xac hop dong tool (JSON) voi
-# ban TypeScript that.
+# Schema input cho tung tool (pydantic)
 # --------------------------------------------------------------------------
 
 
@@ -129,8 +125,14 @@ class ToolMeta:
 TOOLS: list[ToolMeta] = [
     ToolMeta(
         "get_document_snapshot",
-        "Đọc một bản chụp (snapshot) văn bản thuần của tài liệu hiện tại để bạn "
-        "quyết định nơi cần chỉnh sửa.",
+        "Đọc một bản chụp (snapshot) văn bản thuần của tài liệu hiện tại, theo "
+        "từng đoạn (chunk) tối đa maxChars ký tự bắt đầu từ startChar, để bạn "
+        "quyết định nơi cần chỉnh sửa. Kết quả trả về gồm charCount (tổng độ "
+        "dài tài liệu), endChar (vị trí kết thúc đoạn vừa đọc), và hasMore "
+        "(còn phần chưa đọc hay không). Nếu tài liệu dài hơn một đoạn và bạn "
+        "cần hiểu toàn bộ nội dung trước khi chỉnh sửa, hãy gọi lại tool này "
+        "với startChar bằng endChar của lần trước, lặp lại cho tới khi "
+        "hasMore là false.",
         GetDocumentSnapshotInput,
     ),
     ToolMeta(

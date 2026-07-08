@@ -212,6 +212,7 @@ describe('natural prompt scenario unit tests', () => {
       charCount: 35,
       startChar: 17,
       endChar: 29,
+      hasMore: true,
     })
     runtime.destroy()
   })

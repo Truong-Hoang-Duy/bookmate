@@ -7,7 +7,6 @@ import {
 import type { DurableSessionMessage } from '@durable-streams/tanstack-ai-transport'
 import { attachAgentRunController, releaseAgentRunAbort } from '../../lib/agent/agentRunCancellation'
 import { parseChatBody, routeAgentStreamChunks, toModelMessages } from '../../lib/agent/chatStreamRouting'
-import { buildChatToolSystemPrompt, buildEditorContextSystemPrompt } from '../../lib/agent/prompts'
 import { DocumentToolRuntime } from '../../lib/agent/documentToolRuntime'
 import type { EditorContextPayload } from '../../lib/agent/editorContext'
 import { runPythonAgentStream } from '../../lib/agent/pythonAgentBridge'
@@ -75,23 +74,16 @@ async function* agentResponseStream(input: {
       editorContext: input.editorContext,
     })
     const selectionSnapshot = runtime.getSelectionSnapshot()
-    const editorContextPrompt = buildEditorContextSystemPrompt({
-      editorContext: input.editorContext,
-      selectedText: selectionSnapshot?.text,
-    })
 
-    // Python (agent_server.py) owns tool-call decisions + its own closing
-    // summary for this turn; real document mutations still run through the
-    // same `runtime` via the bridge route (src/routes/api/agent-bridge/tool.ts).
+    // (src/routes/api/agent/bridge-tool.ts).
     bridgeRunId = crypto.randomUUID()
     registerBridgeRun(bridgeRunId, runtime)
 
     const pythonStream = runPythonAgentStream({
       runId: bridgeRunId,
       messages: toModelMessages(input.messages) as any,
-      systemPrompt: [buildChatToolSystemPrompt(input.mode), editorContextPrompt]
-        .filter((p): p is string => Boolean(p))
-        .join(' '),
+      editorContextKind: input.editorContext?.kind ?? null,
+      selectedText: selectionSnapshot?.text ?? null,
       mode: input.mode,
       abortController,
     })

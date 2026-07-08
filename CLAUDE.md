@@ -30,19 +30,22 @@ See `README.md` for the full tech stack, setup, and deployment notes.
 ## Key directories
 
 ```
+agent-server/              # the agent brain itself - NOT part of src/, NOT a TanStack route
+  agent_server.py          # see "The agent brain" below
+  agent_shared.py
+  prompts.py
+
 src/routes/api/            # TanStack Start server routes (real API routes)
   chat.ts                  # POST /api/chat - delegates the turn to agent_server.py via the bridge
   chat-stream.ts           # GET  /api/chat-stream - proxies the Durable Stream read side
   agent/stop.ts            # POST /api/agent/stop - cancels an in-flight agent run
-  agent-bridge/tool.ts     # POST /api/agent-bridge/tool - executes one real tool call for Python
+  agent/bridge-tool.ts     # POST /api/agent/bridge-tool - executes one real tool call for Python
   yjs/                      # Yjs proxy routes
-  agent-python-demo/       # the agent brain itself (agent_server.py) - see below, NOT a TanStack route
 
 src/lib/agent/             # the real agent runtime
   documentToolDispatch.ts   # shared tool-execution core (zod schemas + DocumentToolRuntime calls),
                             #   used by the bridge route to run each tool call Python decides on
   documentToolRuntime.ts    # DocumentToolRuntime - real tool logic over Yjs/ProseMirror
-  prompts.ts                # system prompt builders (plain string concatenation, no template lib)
   chatStreamRouting.ts      # request parsing + stream-chunk routing/interception
   serverAgentSession.ts     # Yjs "agent peer" session + awareness + logging
   agentRunCancellation.ts   # per-(docKey,sessionId) AbortController registry
@@ -55,27 +58,35 @@ tests/agent/*.test.ts       # deterministic unit tests
 tests/evals/liveAgentModelEvals.ts  # live evals against the real running app (pnpm test:evals)
 ```
 
-## The agent brain: `src/routes/api/agent-python-demo/agent_server.py`
+## The agent brain: `agent-server/agent_server.py`
 
-Not a real TanStack Start route (TanStack Router only picks up `.ts`/`.tsx`
-files, so `.py` files here don't affect routing) — it's a separate Python
-process that `src/routes/api/chat.ts` always delegates to.
+Lives at the **repo root** in `agent-server/`, deliberately outside
+`src/routes/api/` — it is not a TanStack Start route at all (TanStack Router
+only picks up `.ts`/`.tsx` files) and previously lived inside the routes
+tree only for convenient co-location; it's now a separate top-level Python
+project that `src/routes/api/chat.ts` always delegates to over HTTP.
 
-- **`agent_server.py`** — a FastAPI server. `src/routes/api/chat.ts` POSTs the
-  system prompt + conversation to its `/agent/run` endpoint; Python runs an
-  explicit tool-calling loop against real OpenAI streaming and decides tool
-  calls. Actual document mutations happen in Node via the existing
-  `DocumentToolRuntime`, reached through the internal
-  `POST /api/agent-bridge/tool` route (`src/routes/api/agent-bridge/tool.ts`,
-  guarded by `AGENT_BRIDGE_SECRET`). **Requires running
-  `python agent_server.py` alongside `pnpm dev`** — if it isn't running, chat
-  fails outright (there is no fallback). See this folder's `README.md` for
-  the full architecture diagram and setup.
+- **`agent_server.py`** — a FastAPI server. `src/routes/api/chat.ts` POSTs
+  raw ingredients (`editorContextKind`, `selectedText`, `mode`, conversation)
+  to its `/agent/run` endpoint; Python builds its own Vietnamese system
+  prompt from them (see `prompts.py` below) and runs an explicit tool-calling
+  loop against real OpenAI streaming to decide tool calls. Actual document
+  mutations happen in Node via the existing `DocumentToolRuntime`, reached
+  through the internal `POST /api/agent/bridge-tool` route
+  (`src/routes/api/agent/bridge-tool.ts`, guarded by `AGENT_BRIDGE_SECRET`).
+  **Requires running `python agent_server.py` (from inside `agent-server/`)
+  alongside `pnpm dev`** — if it isn't running, chat fails outright (there is
+  no fallback). See `AGENT_FLOWS.md` at the repo root for the full
+  architecture diagram and setup.
+- **`prompts.py`** — `build_chat_tool_system_prompt(mode)` and
+  `build_editor_context_system_prompt(kind, selected_text)` build the entire
+  system prompt in Vietnamese from the raw ingredients Node sends. This is
+  now the **single source of truth for agent instructions** — Node no longer
+  builds or sends any prompt text at all (the old `src/lib/agent/prompts.ts`
+  has been deleted).
 - **`agent_shared.py`** — pydantic schemas + tool name/description table
   (Vietnamese, translated from `documentToolDispatch.ts`) used by
-  `agent_server.py`. System prompts are NOT here — `agent_server.py` uses
-  the real prompt text sent over by Node via `/agent/run`, so there's a
-  single source of truth for agent instructions.
+  `agent_server.py`.
 
 Rules:
 - Do not wire any of this into `package.json`, `pnpm build`, or
@@ -88,27 +99,29 @@ Rules:
   Cloudflare version** unless `PYTHON_AGENT_BASE_URL` is pointed at a
   separately hosted Python process — there is no in-repo fallback anymore.
 - When editing the real TypeScript agent (`documentToolDispatch.ts`,
-  `documentToolRuntime.ts`, `prompts.ts`), the Python side will drift out of
-  sync since nothing keeps them in lockstep automatically — treat it as a
-  snapshot, not a spec.
+  `documentToolRuntime.ts`), the Python side (`agent_shared.py`) will drift
+  out of sync since nothing keeps them in lockstep automatically — treat it
+  as a snapshot, not a spec. This does not apply to system prompt text
+  anymore since `prompts.py` is now the only place it's written.
 
 ## Conventions to follow when touching the real agent code
 
 - **Tools**: schemas and execution logic both live in `documentToolDispatch.ts`
   (`DOCUMENT_TOOL_SCHEMAS` + `executeDocumentTool`). The bridge route
-  (`agent-bridge/tool.ts`) is the only caller in the live app — it validates
+  (`agent/bridge-tool.ts`) is the only caller in the live app — it validates
   input with the zod schema, calls `executeDocumentTool`, and returns
   `{ result, customEvents }`, which `pythonAgentBridge.ts` turns into
   `CUSTOM` stream chunks for the client UI (`agent-edit-applied`,
   `agent-cursor-updated`, etc.).
 - **No manual tool loop in TypeScript**: the explicit "call model → run tool →
-  repeat" loop lives entirely in `agent_server.py` (Python). Node's role is
-  purely to create/track the `DocumentToolRuntime`, relay the system prompt +
-  messages to Python, execute whatever tool calls Python decides on via the
-  bridge, and translate Python's NDJSON output into the `StreamChunk`/`AGUIEvent`
-  shapes the chat transport expects (`routeAgentStreamChunks`,
-  `toDurableChatSessionResponse` — both reused unchanged, since they only
-  care about chunk shape, not chunk origin).
+  repeat" loop lives entirely in `agent_server.py` (Python), and so does the
+  system prompt (`prompts.py`). Node's role is purely to create/track the
+  `DocumentToolRuntime`, relay `editorContextKind` + `selectedText` + `mode` +
+  messages to Python (raw ingredients only, no prompt text), execute whatever
+  tool calls Python decides on via the bridge, and translate Python's NDJSON
+  output into the `StreamChunk`/`AGUIEvent` shapes the chat transport expects
+  (`routeAgentStreamChunks`, `toDurableChatSessionResponse` — both reused
+  unchanged, since they only care about chunk shape, not chunk origin).
 - **Chat summary after edits**: `agent_server.py` decides on its own whether
   a closing chat sentence is needed (tracks `had_mutation`/`chat_message_sent`)
   and, if so, makes one extra tool-less OpenAI call itself to generate it.
@@ -123,7 +136,8 @@ Rules:
 ## Commands
 
 - `pnpm dev` — run app + Durable Streams + Yjs servers together (also run
-  `python agent_server.py` separately — see the agent brain section above)
+  `python agent_server.py` from `agent-server/` separately — see the agent
+  brain section above)
 - `pnpm dev:app` / `pnpm dev:ds` — run app only / servers only
 - `pnpm test:unit` — deterministic unit tests (Vitest)
 - `pnpm test:evals` — live evals against the real running app; requires

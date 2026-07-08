@@ -17,6 +17,7 @@ describe('DocumentToolRuntime unit tests', () => {
       charCount: 9,
       startChar: 2,
       endChar: 6,
+      hasMore: true,
     })
 
     runtime.destroy()
@@ -33,7 +34,32 @@ describe('DocumentToolRuntime unit tests', () => {
       charCount: 3,
       startChar: 3,
       endChar: 3,
+      hasMore: false,
     })
+
+    runtime.destroy()
+  })
+
+  it('pages through a long document across multiple chunked reads until hasMore is false', () => {
+    const session = createTestSession()
+    const runtime = DocumentToolRuntime.createForSession({ session })
+
+    const full = Array.from({ length: 25 }, (_, i) => `word${i}`).join(' ')
+    runtime.insertText(full)
+
+    let startChar = 0
+    let collected = ''
+    let iterations = 0
+    while (true) {
+      const chunk = runtime.getDocumentSnapshot(30, startChar)
+      collected += chunk.text
+      iterations += 1
+      if (!chunk.hasMore) break
+      startChar = chunk.endChar
+    }
+
+    expect(collected).toBe(full)
+    expect(iterations).toBeGreaterThan(1)
 
     runtime.destroy()
   })

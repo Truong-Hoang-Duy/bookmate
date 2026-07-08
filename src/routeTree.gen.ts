@@ -15,7 +15,7 @@ import { Route as ApiChatStreamRouteImport } from './routes/api/chat-stream'
 import { Route as ApiChatRouteImport } from './routes/api/chat'
 import { Route as ApiYjsSplatRouteImport } from './routes/api/yjs/$'
 import { Route as ApiAgentStopRouteImport } from './routes/api/agent/stop'
-import { Route as ApiAgentBridgeToolRouteImport } from './routes/api/agent-bridge/tool'
+import { Route as ApiAgentBridgeToolRouteImport } from './routes/api/agent/bridge-tool'
 import { Route as ApiYjsDocsSplatRouteImport } from './routes/api/yjs/docs/$'
 
 const IndexRoute = IndexRouteImport.update({
@@ -49,8 +49,8 @@ const ApiAgentStopRoute = ApiAgentStopRouteImport.update({
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAgentBridgeToolRoute = ApiAgentBridgeToolRouteImport.update({
-  id: '/api/agent-bridge/tool',
-  path: '/api/agent-bridge/tool',
+  id: '/api/agent/bridge-tool',
+  path: '/api/agent/bridge-tool',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiYjsDocsSplatRoute = ApiYjsDocsSplatRouteImport.update({
@@ -64,7 +64,7 @@ export interface FileRoutesByFullPath {
   '/api/chat': typeof ApiChatRoute
   '/api/chat-stream': typeof ApiChatStreamRoute
   '/doc/$name': typeof DocNameRoute
-  '/api/agent-bridge/tool': typeof ApiAgentBridgeToolRoute
+  '/api/agent/bridge-tool': typeof ApiAgentBridgeToolRoute
   '/api/agent/stop': typeof ApiAgentStopRoute
   '/api/yjs/$': typeof ApiYjsSplatRoute
   '/api/yjs/docs/$': typeof ApiYjsDocsSplatRoute
@@ -74,7 +74,7 @@ export interface FileRoutesByTo {
   '/api/chat': typeof ApiChatRoute
   '/api/chat-stream': typeof ApiChatStreamRoute
   '/doc/$name': typeof DocNameRoute
-  '/api/agent-bridge/tool': typeof ApiAgentBridgeToolRoute
+  '/api/agent/bridge-tool': typeof ApiAgentBridgeToolRoute
   '/api/agent/stop': typeof ApiAgentStopRoute
   '/api/yjs/$': typeof ApiYjsSplatRoute
   '/api/yjs/docs/$': typeof ApiYjsDocsSplatRoute
@@ -85,7 +85,7 @@ export interface FileRoutesById {
   '/api/chat': typeof ApiChatRoute
   '/api/chat-stream': typeof ApiChatStreamRoute
   '/doc/$name': typeof DocNameRoute
-  '/api/agent-bridge/tool': typeof ApiAgentBridgeToolRoute
+  '/api/agent/bridge-tool': typeof ApiAgentBridgeToolRoute
   '/api/agent/stop': typeof ApiAgentStopRoute
   '/api/yjs/$': typeof ApiYjsSplatRoute
   '/api/yjs/docs/$': typeof ApiYjsDocsSplatRoute
@@ -97,7 +97,7 @@ export interface FileRouteTypes {
     | '/api/chat'
     | '/api/chat-stream'
     | '/doc/$name'
-    | '/api/agent-bridge/tool'
+    | '/api/agent/bridge-tool'
     | '/api/agent/stop'
     | '/api/yjs/$'
     | '/api/yjs/docs/$'
@@ -107,7 +107,7 @@ export interface FileRouteTypes {
     | '/api/chat'
     | '/api/chat-stream'
     | '/doc/$name'
-    | '/api/agent-bridge/tool'
+    | '/api/agent/bridge-tool'
     | '/api/agent/stop'
     | '/api/yjs/$'
     | '/api/yjs/docs/$'
@@ -117,7 +117,7 @@ export interface FileRouteTypes {
     | '/api/chat'
     | '/api/chat-stream'
     | '/doc/$name'
-    | '/api/agent-bridge/tool'
+    | '/api/agent/bridge-tool'
     | '/api/agent/stop'
     | '/api/yjs/$'
     | '/api/yjs/docs/$'
@@ -178,10 +178,10 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiAgentStopRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/agent-bridge/tool': {
-      id: '/api/agent-bridge/tool'
-      path: '/api/agent-bridge/tool'
-      fullPath: '/api/agent-bridge/tool'
+    '/api/agent/bridge-tool': {
+      id: '/api/agent/bridge-tool'
+      path: '/api/agent/bridge-tool'
+      fullPath: '/api/agent/bridge-tool'
       preLoaderRoute: typeof ApiAgentBridgeToolRouteImport
       parentRoute: typeof rootRouteImport
     }
