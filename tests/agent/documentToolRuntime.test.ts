@@ -257,6 +257,86 @@ describe('DocumentToolRuntime unit tests', () => {
     runtime.destroy()
   })
 
+  it('streams multi-block markdown into a mid-document selection in order (regression)', async () => {
+    const session = createTestSession()
+    const runtime = DocumentToolRuntime.createForSession({ session })
+
+    // Build three paragraphs: First / MIDDLE / Last.
+    runtime.insertText('First paragraph.')
+    runtime.placeCursorAtDocumentBoundary('end')
+    runtime.insertParagraphBreak()
+    runtime.insertText('MIDDLE')
+    runtime.insertParagraphBreak()
+    runtime.insertText('Last paragraph.')
+    expect(readDocText(session)).toBe('First paragraph.\n\nMIDDLE\n\nLast paragraph.')
+
+    // Rewrite the middle paragraph with multi-paragraph markdown streamed in chunks.
+    const [middle] = runtime.searchText('MIDDLE')
+    runtime.selectText(middle!.matchId)
+    runtime.startStreamingEdit('rewrite', 'markdown')
+
+    await runtime.pushStreamingText('Alpha line.\n\n')
+    await runtime.pushStreamingText('Beta line.\n\n')
+    await runtime.pushStreamingText('Gamma line.')
+    runtime.stopStreamingEdit(false)
+
+    // Every streamed block must land where MIDDLE was — contiguous, in order,
+    // after the first paragraph and before the last. The bug sent later blocks
+    // to the end of the document, scrambling the order.
+    const text = readDocText(session)
+    const iFirst = text.indexOf('First paragraph.')
+    const iAlpha = text.indexOf('Alpha line.')
+    const iBeta = text.indexOf('Beta line.')
+    const iGamma = text.indexOf('Gamma line.')
+    const iLast = text.indexOf('Last paragraph.')
+
+    expect(iFirst).toBeGreaterThanOrEqual(0)
+    expect(iAlpha).toBeGreaterThan(iFirst)
+    expect(iBeta).toBeGreaterThan(iAlpha)
+    expect(iGamma).toBeGreaterThan(iBeta)
+    expect(iLast).toBeGreaterThan(iGamma)
+    expect(text).not.toContain('MIDDLE')
+
+    runtime.destroy()
+  })
+
+  it('skips re-inserting a whole line that already exists as a block (dedupe guard)', () => {
+    const session = createTestSession()
+    const runtime = DocumentToolRuntime.createForSession({ session })
+
+    const intro = 'Tối: Dạo phố đi bộ, chụp ảnh tại các quán cà phê view đẹp'
+    runtime.insertText(intro)
+    runtime.placeCursorAtDocumentBoundary('end')
+    runtime.insertParagraphBreak()
+    runtime.insertText('Some other paragraph content here.')
+
+    // Agent echoes the opening line again at the end — must be skipped.
+    runtime.placeCursorAtDocumentBoundary('end')
+    const result = runtime.insertText(intro)
+
+    expect(result).toEqual({ ok: true, insertedChars: 0 })
+    expect(readDocText(session).split(intro).length - 1).toBe(1)
+
+    runtime.destroy()
+  })
+
+  it('still inserts a short line even if it matches an existing block', () => {
+    const session = createTestSession()
+    const runtime = DocumentToolRuntime.createForSession({ session })
+
+    runtime.insertText('Total')
+    runtime.placeCursorAtDocumentBoundary('end')
+    runtime.insertParagraphBreak()
+    runtime.insertText('Body text.')
+    runtime.placeCursorAtDocumentBoundary('end')
+
+    // Short strings (< 24 chars) are never guarded — legitimate repeats stay.
+    const result = runtime.insertText('Total')
+    expect(result.insertedChars).toBe(5)
+
+    runtime.destroy()
+  })
+
   it('keeps insert anchors stable across external edits', async () => {
     const session = createTestSession()
     const runtime = DocumentToolRuntime.createForSession({ session })

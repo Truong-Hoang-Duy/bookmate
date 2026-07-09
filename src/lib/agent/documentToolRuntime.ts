@@ -234,29 +234,16 @@ function resolveBlockInsertPos(doc: PMNode, pos: number): number {
   return $pos.after($pos.depth)
 }
 
-function resolveNodePathPosition(doc: PMNode, path: number[]): { node: PMNode; pos: number } | null {
-  let node = doc
-  let pos = 0
-
-  for (let depth = 0; depth < path.length; depth++) {
-    const index = path[depth]!
-    if (index < 0 || index >= node.childCount) return null
-    let offset = 0
-    for (let i = 0; i < index; i++) offset += node.child(i).nodeSize
-    pos = node.type === schema.nodes.doc ? pos + offset : pos + 1 + offset
-    node = node.child(index)
+/** End of the textblock that contains `pos` — where inline content should be appended. */
+function textblockEndPos(doc: PMNode, pos: number): number {
+  const clamped = Math.max(0, Math.min(pos, doc.content.size))
+  const $pos = doc.resolve(clamped)
+  for (let depth = $pos.depth; depth >= 1; depth--) {
+    if ($pos.node(depth).isTextblock) {
+      return $pos.end(depth)
+    }
   }
-
-  return { node, pos }
-}
-
-function insertionPosAtEndOfNode(doc: PMNode, path: number[]): number | null {
-  if (path.length === 0) {
-    return doc.content.size
-  }
-  const resolved = resolveNodePathPosition(doc, path)
-  if (!resolved) return null
-  return resolved.pos + resolved.node.content.size + 1
+  return clamped
 }
 
 export interface SearchMatchResult {
@@ -434,6 +421,28 @@ export class DocumentToolRuntime {
   private clearSelectionInternal(): void {
     this.selectionStartBytes = undefined
     this.selectionEndBytes = undefined
+  }
+
+  /**
+   * Safety net for the agent re-inserting a line it already wrote (e.g. echoing
+   * the opening line at the end of the document). Only triggers on a substantial
+   * whole-line/paragraph insert that exactly matches an existing block, so short
+   * repeated labels and mid-sentence phrases are left untouched.
+   */
+  private duplicatesExistingBlock(text: string): boolean {
+    const needle = text.trim()
+    if (needle.length < 24) return false
+    const { doc } = this.getMapping()
+    let found = false
+    doc.descendants((node) => {
+      if (found) return false
+      if (node.isTextblock && node.textContent.trim() === needle) {
+        found = true
+        return false
+      }
+      return true
+    })
+    return found
   }
 
   getDocumentSnapshot(
@@ -818,6 +827,12 @@ export class DocumentToolRuntime {
           : replaceRange(this.session, this.origin, selection.from, selection.to, text)
       this.clearSelectionInternal()
     } else {
+      if (this.duplicatesExistingBlock(text)) {
+        // The agent is re-inserting a whole line/paragraph already in the
+        // document — skip it so the content isn't duplicated (e.g. the opening
+        // line echoed at the end). Reported as a no-op (insertedChars: 0).
+        return { ok: true, insertedChars: 0 }
+      }
       this.ensureCursorAtEnd()
       const { meta } = this.getMapping()
       const mapping = meta.mapping as ProsemirrorMapping
@@ -1022,8 +1037,9 @@ export class DocumentToolRuntime {
 
     if (diff.appendToLastBlock && diff.appendToLastBlock.fragment.size > 0) {
       const latestDoc = changed ? this.getMapping().doc : doc
-      const targetPos =
-        insertionPosAtEndOfNode(latestDoc, diff.appendToLastBlock.path) ?? currentPos
+      // Extend the block that currently holds the write head (anchor-relative),
+      // not a block index counted from the top of the live document.
+      const targetPos = textblockEndPos(latestDoc, currentPos)
       const inserted = replaceRangeWithFragment(
         this.session,
         this.origin,
@@ -1039,11 +1055,11 @@ export class DocumentToolRuntime {
     const appendedBlocks = diff.appendedBlocks?.nodes ?? []
     if (appendedBlocks.length > 0) {
       const latestDoc = changed ? this.getMapping().doc : doc
-      const blockPos =
-        edit.renderedMarkdownDoc === null
-          ? resolveBlockInsertPos(latestDoc, currentPos)
-          : insertionPosAtEndOfNode(latestDoc, diff.appendedBlocks?.path ?? []) ??
-            resolveBlockInsertPos(latestDoc, currentPos)
+      // Always insert new blocks at the boundary next to the write head so
+      // streamed paragraphs stay contiguous at the insertion point instead of
+      // jumping to the end of the document (diff paths are indices within the
+      // streamed markdown doc, not the live doc).
+      const blockPos = resolveBlockInsertPos(latestDoc, currentPos)
       const inserted = replaceRangeWithFragment(
         this.session,
         this.origin,

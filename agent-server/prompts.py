@@ -105,6 +105,13 @@ def build_chat_tool_system_prompt(preferred_mode: Optional[str] = None) -> str:
         "bản đó của assistant, nhưng bạn có thể gọi stop_streaming_edit để "
         "huỷ hoặc kết thúc sớm.",
         "Đừng đưa câu tóm tắt vào bên trong nội dung tài liệu đang stream.",
+        "Không lặp lại nội dung đã có trong tài liệu: sau khi đã stream hoặc "
+        "chèn xong, đừng chèn lại dòng mở đầu, tiêu đề, hay bất kỳ đoạn nào "
+        "vốn đã xuất hiện trong tài liệu. Tuyệt đối không lặp lại dòng mở đầu "
+        "ở cuối tài liệu.",
+        "Khi thêm một dòng hoặc đoạn mới tách biệt với đoạn liền trước, hãy "
+        "bảo đảm có một dòng trống ngăn cách để nội dung mới không bị dính "
+        "liền vào cuối đoạn trước.",
         "Sau các chỉnh sửa tài liệu không streaming như delete_selection, "
         "insert_text, hoặc set_format, hãy theo sau bằng một câu chat ngắn "
         "mô tả chính xác những gì bạn vừa thay đổi.",
