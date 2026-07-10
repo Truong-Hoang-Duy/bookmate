@@ -11,8 +11,39 @@ from fastapi.responses import StreamingResponse
 from openai import OpenAI
 from pydantic import BaseModel, ValidationError
 
-from agent_shared import TOOL_BY_NAME, build_openai_tools, log_step
+from agent_shared import TOOLS, TOOL_BY_NAME, build_openai_tools, log_step
 from prompts import build_chat_tool_system_prompt, build_editor_context_system_prompt
+
+# --- Hook tính năng tách rời: RAG pháp lý (đọc-only, chạy thẳng Python) ---
+from legal_rag import (
+    LEGAL_TOOLS,
+    LOCAL_TOOL_EXECUTORS,
+    ToolContext,
+    is_enabled,
+    system_prompt_fragment,
+)
+
+LEGAL_TOOL_BY_NAME = {meta.name: meta for meta in LEGAL_TOOLS}
+
+
+def _make_tool_context(run_id: str) -> ToolContext:
+    """Cung cấp cho executor cục bộ khả năng đọc toàn văn tài liệu editor, bằng
+    cách lặp get_document_snapshot qua Node bridge tới khi hết (hasMore=False)."""
+
+    def fetch_document_text() -> str:
+        parts: list[str] = []
+        start = 0
+        for _ in range(200):  # chặn vòng lặp vô hạn
+            result, _events = bridge_execute_tool(
+                run_id, "get_document_snapshot", {"startChar": start, "maxChars": 12000}
+            )
+            parts.append(result.get("text", ""))
+            if not result.get("hasMore"):
+                break
+            start = result.get("endChar", start)
+        return "".join(parts)
+
+    return ToolContext(fetch_document_text=fetch_document_text)
 
 load_dotenv(Path(__file__).parent / ".env")
 
@@ -86,7 +117,8 @@ def stream_agent_run(run_id: str, system_prompt: str, messages: list[dict], mode
 
     client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
     model = os.environ.get("OPENAI_MODEL", "gpt-5.4")
-    tools_schema = build_openai_tools()
+    active_tools = list(TOOLS) + (list(LEGAL_TOOLS) if is_enabled() else [])
+    tools_schema = build_openai_tools(active_tools)
     convo: list[dict] = [{"role": "system", "content": system_prompt}, *messages]
 
     log_step("[server]", "bắt đầu xử lý run", runId=run_id, mode=mode)
@@ -154,7 +186,7 @@ def stream_agent_run(run_id: str, system_prompt: str, messages: list[dict], mode
                 tag = f"[tool:{name}]"
                 log_step("[agent]", "model yêu cầu gọi tool", runId=run_id, tool=name, arguments=acc["arguments"])
 
-                spec = TOOL_BY_NAME.get(name)
+                spec = TOOL_BY_NAME.get(name) or LEGAL_TOOL_BY_NAME.get(name)
                 if spec is None:
                     result: dict = {"ok": False, "error": f"Tool không xác định: {name}"}
                     args_dict: dict = {}
@@ -177,8 +209,15 @@ def stream_agent_run(run_id: str, system_prompt: str, messages: list[dict], mode
                         continue
 
                     try:
-                        result, custom_events = bridge_execute_tool(run_id, name, args_dict)
-                        log_step(tag, "kết quả từ bridge (đã sửa tài liệu)", result=result)
+                        # Tool cục bộ (read-only, vd RAG pháp lý) chạy thẳng trong
+                        # Python; các tool tài liệu vẫn đi qua Node bridge.
+                        if name in LOCAL_TOOL_EXECUTORS:
+                            result = LOCAL_TOOL_EXECUTORS[name](args_dict, _make_tool_context(run_id))
+                            custom_events = []
+                            log_step(tag, "kết quả từ executor cục bộ", result=result)
+                        else:
+                            result, custom_events = bridge_execute_tool(run_id, name, args_dict)
+                            log_step(tag, "kết quả từ bridge (đã sửa tài liệu)", result=result)
                     except Exception as exc:  # noqa: BLE001 - surface any bridge failure to the model + UI
                         log_step(tag, "lỗi khi gọi bridge", error=str(exc))
                         result = {"ok": False, "error": str(exc)}
@@ -229,6 +268,9 @@ async def agent_run(body: AgentRunRequest) -> StreamingResponse:
     editor_prompt = build_editor_context_system_prompt(body.editorContextKind, body.selectedText)
     if editor_prompt:
         system_prompt_parts.append(editor_prompt)
+    legal_prompt = system_prompt_fragment()
+    if legal_prompt:
+        system_prompt_parts.append(legal_prompt)
     system_prompt = " ".join(system_prompt_parts)
 
     return StreamingResponse(

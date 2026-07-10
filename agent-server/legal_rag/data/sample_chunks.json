@@ -1,0 +1,51 @@
+[
+  {
+    "id": "sample-ldn2020-d17-k2",
+    "text": "Tổ chức, cá nhân có quyền thành lập và quản lý doanh nghiệp tại Việt Nam, trừ các trường hợp bị cấm như cán bộ, công chức theo quy định của pháp luật về cán bộ, công chức. (NỘI DUNG MẪU, diễn giải tóm tắt — không phải trích nguyên văn.)",
+    "document_no": "59/2020/QH14",
+    "document_title": "Luật Doanh nghiệp 2020 (MẪU)",
+    "article": "Điều 17",
+    "clause": "Khoản 2",
+    "effective_date": "2021-01-01",
+    "status": "current",
+    "source_url": null,
+    "sample": true
+  },
+  {
+    "id": "sample-blds2015-d385",
+    "text": "Hợp đồng là sự thỏa thuận giữa các bên về việc xác lập, thay đổi hoặc chấm dứt quyền, nghĩa vụ dân sự. (NỘI DUNG MẪU, diễn giải tóm tắt.)",
+    "document_no": "91/2015/QH13",
+    "document_title": "Bộ luật Dân sự 2015 (MẪU)",
+    "article": "Điều 385",
+    "clause": null,
+    "effective_date": "2017-01-01",
+    "status": "current",
+    "source_url": null,
+    "sample": true
+  },
+  {
+    "id": "sample-blds2015-d418-k1",
+    "text": "Phạt vi phạm là sự thỏa thuận giữa các bên trong hợp đồng, theo đó bên vi phạm nghĩa vụ phải nộp một khoản tiền cho bên bị vi phạm. (NỘI DUNG MẪU, diễn giải tóm tắt.)",
+    "document_no": "91/2015/QH13",
+    "document_title": "Bộ luật Dân sự 2015 (MẪU)",
+    "article": "Điều 418",
+    "clause": "Khoản 1",
+    "effective_date": "2017-01-01",
+    "status": "current",
+    "source_url": null,
+    "sample": true
+  },
+  {
+    "id": "sample-ldn2014-d18-repealed",
+    "text": "Quy định về quyền thành lập doanh nghiệp theo Luật Doanh nghiệp 2014 — ĐÃ HẾT HIỆU LỰC, được thay thế bởi Luật Doanh nghiệp 2020. (NỘI DUNG MẪU dùng để minh hoạ lọc theo hiệu lực.)",
+    "document_no": "68/2014/QH13",
+    "document_title": "Luật Doanh nghiệp 2014 (MẪU)",
+    "article": "Điều 18",
+    "clause": null,
+    "effective_date": "2015-07-01",
+    "status": "repealed",
+    "superseded_by": "59/2020/QH14",
+    "source_url": null,
+    "sample": true
+  }
+]

@@ -1,0 +1,10 @@
+# Phụ thuộc TÙY CHỌN cho legal_rag.
+# Backend mặc định 'memory' KHÔNG cần cài gì trong file này (chỉ dùng stdlib +
+# pydantic vốn đã có ở agent-server/requirements.txt).
+#
+# Chỉ cài khi chuyển sang embedding thật / Qdrant / reranker:
+#   pip install -r legal_rag/requirements.txt
+
+sentence-transformers>=3.0.0   # embedding BGE-M3 + CrossEncoder rerank (BGE-reranker)
+qdrant-client>=1.9.0           # backend Qdrant (hybrid dense+sparse)
+# psycopg[binary]>=3.1          # nếu dùng backend pgvector

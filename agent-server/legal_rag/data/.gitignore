@@ -1,0 +1,5 @@
+# Corpus luật thật + artifact index có thể rất lớn — không commit.
+# Giữ lại dữ liệu mẫu để demo/test.
+*
+!.gitignore
+!sample_chunks.json

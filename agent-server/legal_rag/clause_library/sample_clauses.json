@@ -1,0 +1,23 @@
+[
+  {
+    "id": "clause-confidentiality",
+    "title": "Điều khoản Bảo mật (MẪU)",
+    "category": "confidentiality",
+    "body": "Mỗi Bên cam kết giữ bí mật toàn bộ thông tin bí mật nhận được từ Bên kia trong quá trình thực hiện Hợp đồng và không tiết lộ cho bên thứ ba nếu không có sự đồng ý bằng văn bản, trừ trường hợp pháp luật yêu cầu. (MẪU tham khảo.)",
+    "related_law": ["91/2015/QH13"]
+  },
+  {
+    "id": "clause-penalty",
+    "title": "Điều khoản Phạt vi phạm (MẪU)",
+    "category": "penalty",
+    "body": "Bên vi phạm nghĩa vụ phải chịu phạt vi phạm theo mức do các Bên thỏa thuận, phù hợp với quy định pháp luật hiện hành. (MẪU tham khảo — mức phạt cần rà theo luật chuyên ngành áp dụng.)",
+    "related_law": ["91/2015/QH13"]
+  },
+  {
+    "id": "clause-dispute",
+    "title": "Điều khoản Giải quyết tranh chấp (MẪU)",
+    "category": "dispute_resolution",
+    "body": "Mọi tranh chấp phát sinh từ hoặc liên quan đến Hợp đồng này trước hết được giải quyết thông qua thương lượng; nếu không đạt kết quả, tranh chấp được đưa ra Tòa án/Trọng tài có thẩm quyền theo quy định pháp luật. (MẪU tham khảo.)",
+    "related_law": []
+  }
+]
